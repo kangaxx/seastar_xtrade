@@ -1,0 +1,6 @@
+* text=auto eol=lf
+
+*.cc diff=cpp
+*.hh diff=cpp
+
+*.so binary
