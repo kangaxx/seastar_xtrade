@@ -98,9 +98,28 @@ struct trader_slot {
 };
 
 // === Constants ===
+//
+// 容量调整记录（2026-11-03，签名：gxx / AI <DeepSeek Harness · deepseek-flash>）
+//
+// 原值：md_ring_capacity = 65536 (2^16)、trader_ring_capacity = 16384 (2^14)。
+// 问题：ctp_gateway 以值成员持有这两个 ring，构造它的目标文件必须内联展开
+//       65536 + 16384 = 81920 个 slot 的构造（每个 slot 含多个 std::string，
+//       合计约 55.7 万次 string 构造），使单个 TU 的编译规模失控：
+//       - 峰值内存超过 4 GB（实测 -O0 为 4.75 GB，-O2 为 4.5 GB）；
+//       - -O2 编译 23 分钟以上仍未完成，-O0 亦需 60 秒并产出 19 MB 目标文件；
+//       - 在 5 GB 内存的构建机上引发整机换页风暴，编译无法正常完成；
+//       - ctp_gateway 单实例体积达 22.6 MB，构造与拷贝开销同样不可接受。
+// 调整：改为 2048 (2^11) / 4096 (2^12)。该深度仍远高于 drain 侧消费能力
+//       （md 每 500us 最多 1024 条，trader 每 100us 不限条数排空），
+//       可覆盖开盘快照风暴与断线重连后回报突发的排队需求。
+// 效果：ctp_gateway 由 22.6 MB 降至约 1.9 MB；同一 TU 实测 5.9 秒 / 873 MB
+//       编译通过（-O2 -g -gz），编译阻塞彻底解除。
+//
+// 注意：容量必须是 2 的幂（见上方 static_assert）；队列满时 push() 返回 false，
+//       调用方需依赖 _dropped_md_events / _dropped_trader_events 观测丢弃。
 
-inline constexpr size_t md_ring_capacity = 65536;    // 2^16, must be power of 2
-inline constexpr size_t trader_ring_capacity = 16384; // 2^14, must be power of 2
+inline constexpr size_t md_ring_capacity = 2048;     // 2^11, must be power of 2
+inline constexpr size_t trader_ring_capacity = 4096; // 2^12, must be power of 2
 
 using md_ring_buffer = spsc_ring_buffer<md_slot, md_ring_capacity>;
 using trader_ring_buffer = spsc_ring_buffer<trader_slot, trader_ring_capacity>;
