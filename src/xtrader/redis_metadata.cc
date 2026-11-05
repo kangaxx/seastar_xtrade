@@ -53,13 +53,6 @@ std::string escape_csv(const std::string& s) {
     return s;
 }
 
-std::string unescape_csv(const std::string& s) {
-    if (s.size() >= 2 && s.front() == '\"' && s.back() == '\"') {
-        return s.substr(1, s.size() - 2);
-    }
-    return s;
-}
-
 std::vector<std::string> split_csv_line(const std::string& line) {
     std::vector<std::string> fields;
     std::string field;

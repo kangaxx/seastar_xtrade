@@ -33,11 +33,11 @@ public:
     using order_handler_t = std::function<future<domain::order_status>(const domain::order_request&)>;
     using trade_handler_t = std::function<void(const domain::trade_report&)>;
 
-    runtime_engine() = default;
+    runtime_engine();
     ~runtime_engine();
 
-    runtime_engine(runtime_engine&&) noexcept = default;
-    runtime_engine& operator=(runtime_engine&&) noexcept = default;
+    runtime_engine(runtime_engine&&) noexcept;
+    runtime_engine& operator=(runtime_engine&&) noexcept;
 
     runtime_engine(const runtime_engine&) = delete;
     runtime_engine& operator=(const runtime_engine&) = delete;

@@ -21,6 +21,12 @@
 
 namespace seastar::xtrader {
 
+runtime_engine::runtime_engine() = default;
+
+runtime_engine::runtime_engine(runtime_engine&&) noexcept = default;
+
+runtime_engine& runtime_engine::operator=(runtime_engine&&) noexcept = default;
+
 runtime_engine::runtime_engine(unsigned account_shard)
     : _account_shard(account_shard)
 {}

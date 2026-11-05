@@ -85,12 +85,18 @@ private:
 
 // === Slot Types for CTP Bridge ===
 
+// User-provided constructors avoid GCC 11's per-member aggregate expansion
+// when value-initializing large slot arrays.
 struct md_slot {
+    md_slot() {}
+
     uint64_t capture_ns = 0;   // timestamp when callback entered (nanoseconds since boot)
     domain::market_data data;
 };
 
 struct trader_slot {
+    trader_slot() {}
+
     uint64_t capture_ns = 0;
     domain::event_type type = domain::event_type::order;
     domain::order order_data;
@@ -113,7 +119,8 @@ struct trader_slot {
 //       （md 每 500us 最多 1024 条，trader 每 100us 不限条数排空），
 //       可覆盖开盘快照风暴与断线重连后回报突发的排队需求。
 // 效果：ctp_gateway 由 22.6 MB 降至约 1.9 MB；同一 TU 实测 5.9 秒 / 873 MB
-//       编译通过（-O2 -g -gz），编译阻塞彻底解除。
+//       编译通过（历史测量）；2026-11-05 在 GCC 11 上仍复现初始化展开，
+//       因此额外使用上方用户定义的槽构造函数，避免逐成员聚合展开。
 //
 // 注意：容量必须是 2 的幂（见上方 static_assert）；队列满时 push() 返回 false，
 //       调用方需依赖 _dropped_md_events / _dropped_trader_events 观测丢弃。

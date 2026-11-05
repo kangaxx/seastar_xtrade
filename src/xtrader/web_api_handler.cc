@@ -40,7 +40,7 @@ sstring json_escape(const sstring& s) {
             case '\n': r += "\\n"; break;
             case '\r': r += "\\r"; break;
             case '\t': r += "\\t"; break;
-            default:   r.push_back(c); break;
+            default:   r += sstring(1, c); break;
         }
     }
     return r;
@@ -56,14 +56,6 @@ sstring json_kv(const sstring& key, uint64_t val) {
 
 sstring json_kv(const sstring& key, int val) {
     return "\"" + key + "\":" + to_sstring(val);
-}
-
-sstring json_kv(const sstring& key, size_t val) {
-    return "\"" + key + "\":" + to_sstring(val);
-}
-
-sstring json_kv(const sstring& key, bool val) {
-    return "\"" + key + "\":" + sstring(val ? "true" : "false");
 }
 
 } // anonymous namespace
@@ -229,49 +221,52 @@ web_api_handler::~web_api_handler() = default;
 future<> web_api_handler::start() {
     if (_started) return make_ready_future<>();
 
-    _server = std::make_unique<httpd::http_server>();
+    _server = std::make_unique<httpd::http_server_control>();
 
-    _server->set_routes([this](httpd::routes& r) {
-        using namespace httpd;
+    return _server->start().then([this] {
+        return _server->set_routes([this](httpd::routes& r) {
+            using namespace httpd;
 
-        r.add(operation_type::GET, url("/api/datasets"),
-            new function_handler([this](std::unique_ptr<http::request> req,
-                                         std::unique_ptr<http::reply> rep) {
-                return handle_get_datasets(std::move(req), std::move(rep));
-            }, "json"));
+            r.add(operation_type::GET, url("/api/datasets"),
+                new function_handler([this](std::unique_ptr<http::request> req,
+                                             std::unique_ptr<http::reply> rep) {
+                    return handle_get_datasets(std::move(req), std::move(rep));
+                }, "json"));
 
-        r.add(operation_type::GET, url("/api/datasets/:exchange/:symbol/:timeframe"),
-            new function_handler([this](std::unique_ptr<http::request> req,
-                                         std::unique_ptr<http::reply> rep) {
-                return handle_get_dataset(std::move(req), std::move(rep));
-            }, "json"));
+            r.add(operation_type::GET, url("/api/datasets/:exchange/:symbol/:timeframe"),
+                new function_handler([this](std::unique_ptr<http::request> req,
+                                             std::unique_ptr<http::reply> rep) {
+                    return handle_get_dataset(std::move(req), std::move(rep));
+                }, "json"));
 
-        r.add(operation_type::GET, url("/api/strategies"),
-            new function_handler([this](std::unique_ptr<http::request> req,
-                                         std::unique_ptr<http::reply> rep) {
-                return handle_get_strategies(std::move(req), std::move(rep));
-            }, "json"));
+            r.add(operation_type::GET, url("/api/strategies"),
+                new function_handler([this](std::unique_ptr<http::request> req,
+                                             std::unique_ptr<http::reply> rep) {
+                    return handle_get_strategies(std::move(req), std::move(rep));
+                }, "json"));
 
-        r.add(operation_type::GET, url("/api/strategies/:strategy_id"),
-            new function_handler([this](std::unique_ptr<http::request> req,
-                                         std::unique_ptr<http::reply> rep) {
-                return handle_get_strategy(std::move(req), std::move(rep));
-            }, "json"));
+            r.add(operation_type::GET, url("/api/strategies/:strategy_id"),
+                new function_handler([this](std::unique_ptr<http::request> req,
+                                             std::unique_ptr<http::reply> rep) {
+                    return handle_get_strategy(std::move(req), std::move(rep));
+                }, "json"));
 
-        r.add(operation_type::GET, url("/api/replays/:job_id"),
-            new function_handler([this](std::unique_ptr<http::request> req,
-                                         std::unique_ptr<http::reply> rep) {
-                return handle_get_replay(std::move(req), std::move(rep));
-            }, "json"));
+            r.add(operation_type::GET, url("/api/replays/:job_id"),
+                new function_handler([this](std::unique_ptr<http::request> req,
+                                             std::unique_ptr<http::reply> rep) {
+                    return handle_get_replay(std::move(req), std::move(rep));
+                }, "json"));
 
-        r.add(operation_type::GET, url("/api/validations/:env"),
-            new function_handler([this](std::unique_ptr<http::request> req,
-                                         std::unique_ptr<http::reply> rep) {
-                return handle_get_validations(std::move(req), std::move(rep));
-            }, "json"));
-    });
-
-    return _server->listen(ipv4_addr{_cfg.listen_addr, _cfg.port}).then([this] {
+            r.add(operation_type::GET, url("/api/validations/:env"),
+                new function_handler([this](std::unique_ptr<http::request> req,
+                                             std::unique_ptr<http::reply> rep) {
+                    return handle_get_validations(std::move(req), std::move(rep));
+                }, "json"));
+        });
+    }).then([this] {
+        const auto address = ipv4_addr(std::string(_cfg.listen_addr.c_str()), _cfg.port);
+        return _server->listen(socket_address(address));
+    }).then([this] {
         _started = true;
         std::cout << "[INFO] web_api_handler: listening on "
                   << _cfg.listen_addr << ":" << _cfg.port << std::endl;
@@ -328,10 +323,9 @@ future<std::unique_ptr<http::reply>> web_api_handler::handle_get_dataset(
     std::unique_ptr<http::reply> rep) {
     rep->set_content_type("application/json");
 
-    auto& params = req->param;
-    sstring exchange  = params["exchange"];
-    sstring symbol    = params["symbol"];
-    sstring timeframe = params["timeframe"];
+    sstring exchange  = req->get_path_param("exchange");
+    sstring symbol    = req->get_path_param("symbol");
+    sstring timeframe = req->get_path_param("timeframe");
 
     redis_dataset_meta meta;
     bool found = _redis_store && _redis_store->is_connected()
@@ -410,8 +404,7 @@ future<std::unique_ptr<http::reply>> web_api_handler::handle_get_strategy(
     std::unique_ptr<http::reply> rep) {
     rep->set_content_type("application/json");
 
-    auto& params = req->param;
-    sstring strategy_id = params["strategy_id"];
+    sstring strategy_id = req->get_path_param("strategy_id");
 
     redis_strategy_state state;
     bool found = _redis_store && _redis_store->is_connected()
@@ -456,8 +449,7 @@ future<std::unique_ptr<http::reply>> web_api_handler::handle_get_replay(
     std::unique_ptr<http::reply> rep) {
     rep->set_content_type("application/json");
 
-    auto& params = req->param;
-    sstring job_id = params["job_id"];
+    sstring job_id = req->get_path_param("job_id");
 
     if (_redis_store && _redis_store->is_connected()) {
         redis_replay_meta meta;
@@ -479,12 +471,12 @@ future<std::unique_ptr<http::reply>> web_api_handler::handle_get_validations(
     rep->set_status(http::reply::status_type::ok);
     rep->set_content_type("application/json");
 
-    auto& params = req->param;
-    sstring env = params["env"];
+    sstring env = req->get_path_param("env");
 
     std::vector<validation_view> list;
     if (_redis_store && _redis_store->is_connected()) {
-        auto keys = _redis_store->keys(std::string(redis_keyspace::validation_prefix) + env + ":*");
+        auto keys = _redis_store->keys(
+            std::string(redis_keyspace::validation_prefix) + env.c_str() + ":*");
         for (const auto& key : keys) {
             redis_validation_result result;
             auto marker = sstring(redis_keyspace::validation_prefix);

@@ -19,6 +19,7 @@
 
 #include <seastar/core/future.hh>
 #include <seastar/core/sstring.hh>
+#include <seastar/http/request.hh>
 #include <seastar/http/reply.hh>
 #include <seastar/xtrader/redis_metadata.hh>
 
@@ -30,7 +31,7 @@
 namespace seastar {
 
 namespace httpd {
-class http_server;
+class http_server_control;
 }
 
 namespace xtrader {
@@ -142,7 +143,7 @@ private:
     redis_metadata_store* _redis_store;
     strategy_lifecycle_manager* _strategy_mgr;
     web_api_config _cfg;
-    std::unique_ptr<httpd::http_server> _server;
+    std::unique_ptr<httpd::http_server_control> _server;
     bool _started = false;
 };
 

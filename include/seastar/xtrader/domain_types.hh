@@ -97,6 +97,7 @@ struct order_request {
     hedge_flag hedge = hedge_flag::speculation;
     int volume = 0;
     double price = 0.0;
+    order_type type = order_type::limit;
 
     [[nodiscard]] bool is_valid() const noexcept {
         return !strategy_id.empty() && !instrument_id.empty() && volume > 0 && price > 0.0;

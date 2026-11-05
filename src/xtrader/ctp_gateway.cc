@@ -33,8 +33,14 @@ namespace {
 // Safe string copy into CTP fixed-size char arrays
 template<size_t N>
 void ctp_str_copy(char (&dst)[N], const sstring& src) {
-    std::strncpy(dst, src.c_str(), N - 1);
-    dst[N - 1] = '\0';
+    size_t i = 0;
+    while (i < N - 1 && i < src.size() && src[i] != '\0') {
+        dst[i] = src[i];
+        ++i;
+    }
+    while (i < N) {
+        dst[i++] = '\0';
+    }
 }
 
 // Map domain::side to CTP direction

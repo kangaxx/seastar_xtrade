@@ -42,7 +42,7 @@ class ctp_gateway;
 class MdSpiAdapter : public CThostFtdcMdSpi {
 public:
     explicit MdSpiAdapter(ctp_gateway* gateway) noexcept;
-    ~MdSpiAdapter() override = default;
+    ~MdSpiAdapter() = default;
 
     MdSpiAdapter(const MdSpiAdapter&) = delete;
     MdSpiAdapter& operator=(const MdSpiAdapter&) = delete;
@@ -79,7 +79,7 @@ private:
 class TraderSpiAdapter : public CThostFtdcTraderSpi {
 public:
     explicit TraderSpiAdapter(ctp_gateway* gateway) noexcept;
-    ~TraderSpiAdapter() override = default;
+    ~TraderSpiAdapter() = default;
 
     TraderSpiAdapter(const TraderSpiAdapter&) = delete;
     TraderSpiAdapter& operator=(const TraderSpiAdapter&) = delete;

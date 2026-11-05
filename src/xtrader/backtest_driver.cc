@@ -29,12 +29,12 @@ namespace seastar::xtrader {
 namespace {
 
 sstring to_lower_copy(std::string_view value) {
-    sstring result;
+    std::string result;
     result.reserve(value.size());
     for (char ch : value) {
         result.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
     }
-    return result;
+    return sstring(result);
 }
 
 sstring normalize_trading_day(const std::string& datetime) {

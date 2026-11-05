@@ -33,6 +33,7 @@ class CThostFtdcMdApi;
 class CThostFtdcTraderApi;
 struct CThostFtdcTradingAccountField;
 struct CThostFtdcRspUserLoginField;
+struct CThostFtdcReqUserLoginField;
 
 namespace seastar::xtrader {
 

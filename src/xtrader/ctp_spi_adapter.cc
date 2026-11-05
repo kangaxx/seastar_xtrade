@@ -313,8 +313,8 @@ void TraderSpiAdapter::OnRspQryInvestorPosition(CThostFtdcInvestorPositionField*
 
     if (pInvestorPosition) {
         std::cout << "[TraderSpi] Position: " << pInvestorPosition->InstrumentID
-                  << ", vol=" << pInvestorPosition->Volume
-                  << ", td_vol=" << pInvestorPosition->TodayVolume << std::endl;
+                  << ", vol=" << pInvestorPosition->Position
+                  << ", td_vol=" << pInvestorPosition->TodayPosition << std::endl;
     }
 }
 
