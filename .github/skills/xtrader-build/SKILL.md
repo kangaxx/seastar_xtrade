@@ -19,6 +19,46 @@
 3. 是否禁用 DPDK（默认 `--disable-dpdk`）。
 4. 是否有 SSH 别名（默认 `xtrader-vbox`）。
 
+## Available Linux Environments
+
+区分本机 VirtualBox Ubuntu 和正式云服务器，不要混用它们的账号、路径或 SSH 配置。
+
+### 本机 VirtualBox Ubuntu
+
+- SSH 别名：`xtrader-vbox`
+- 仓库路径：`/home/vboxuser/workspace/seastar`
+- 用于日常 Debug 增量编译和调试。
+
+### 正式云服务器 L（基于 Lenovo 笔记本的连接记录）
+
+- IP：`47.98.20.225`
+- SSH 用户：`root`
+- 仓库路径：`/root/seastar`
+- Lenovo 笔记本上的 PuTTY 私钥路径：`C:\Users\15821\.ssh\hangzhou.ppk`
+- Windows SSH 工具：`C:\Program Files\PuTTY\plink.exe`
+- 历史系统记录：Ubuntu 24.04.3 LTS；远端连接和构建状态执行前需重新确认。
+
+在 Lenovo 笔记本 PowerShell 上连接：
+
+```powershell
+& "C:\Program Files\PuTTY\plink.exe" -i "C:\Users\15821\.ssh\hangzhou.ppk" -batch root@47.98.20.225 "echo CLOUD_L_OK; uname -a; whoami"
+```
+
+云服务器的 Release 编译按该机当前仓库和脚本执行，不要把 VBox 的 SSH 别名或 `/home/vboxuser/workspace/seastar` 路径用于云服务器：
+
+```powershell
+& "C:\Program Files\PuTTY\plink.exe" -i "C:\Users\15821\.ssh\hangzhou.ppk" -batch root@47.98.20.225 "cd /root/seastar && JOBS=1 bash ./build_release.sh"
+```
+
+以上云服务器信息来源于基于 Lenovo 笔记本的项目记录；若连接失败或环境与记录不一致，先核实当前配置，不要自动重启服务或改动服务器。
+
+### 云服务器 L D（经 L 跳转）
+
+- 连接入口：先登录云服务器 L，再执行 `/root/ssh_Lily_Data_Server_by_LocalNet.sh`。
+- 脚本当前内容：通过 SSH 连接 `root@172.24.205.38`。
+- 已从跳转目标观察到 `/root/seastar` 路径；执行构建前仍需确认仓库状态、目标实例和资源。
+- 这些是基于 Lenovo 笔记本的跳转连接记录。L 与 L D 的主机标识检查结果曾不一致，使用前应重新核实身份；不要默认目标与 L 是同一实例或不同实例。
+
 ## Standard Workflow
 
 ### 1) 连通性与工具链检查
