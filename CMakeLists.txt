@@ -841,6 +841,9 @@ endif ()
 
 add_library (Seastar::seastar ALIAS seastar)
 
+set_source_files_properties (src/net/dns.cc PROPERTIES
+  COMPILE_DEFINITIONS "SEASTAR_CARES_HEADER=\"${c-ares_INCLUDE_DIR}/ares.h\"")
+
 add_dependencies (seastar
   seastar_http_chunk_parsers
   seastar_http_request_parser

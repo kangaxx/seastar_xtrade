@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Update time: 2026-11-06 19:45 (UTC+08:00)
+# Version: 2026.11.06.3
+# 该脚本目前适用于阿里云服务器的基本环境。
 # Build and smoke-check both xtrader applications in the current repository.
 # Task source: user request
 # Requirement: run the VBox debug configure/build workflow and report stalled stages.
@@ -14,8 +17,6 @@ STALL_INTERVAL_SECONDS="${STALL_INTERVAL_SECONDS:-60}"
 LOG_DIR="${ROOT_DIR}/build/logs"
 LOG_FILE="${LOG_DIR}/build_xtrader_$(date '+%Y%m%d_%H%M%S').log"
 CURRENT_STAGE="startup"
-CARES_INCLUDE_DIR=""
-CARES_LIBRARY=""
 
 if ! [[ "${JOBS}" =~ ^[1-9][0-9]*$ ]]; then
 	echo "[ERROR] JOBS must be a positive integer (got: ${JOBS})" >&2
@@ -32,41 +33,6 @@ touch "${LOG_FILE}"
 
 log() {
 	printf '%s %s\n' "[$(date '+%F %T')]" "$*" | tee -a "${LOG_FILE}"
-}
-
-sanitize_build_env() {
-	# Avoid Conda/custom include & library path pollution during configure/link.
-	if command -v conda >/dev/null 2>&1; then
-		conda deactivate >/dev/null 2>&1 || true
-	fi
-	unset CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_PROMPT_MODIFIER CONDA_SHLVL
-	unset PYTHONHOME PYTHONPATH
-	unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH
-	unset LIBRARY_PATH LD_LIBRARY_PATH LD_PRELOAD
-}
-
-resolve_cares() {
-	local include_dir=""
-	local libdir=""
-	local so_path=""
-
-	include_dir="$(pkg-config --variable=includedir libcares 2>/dev/null || true)"
-	libdir="$(pkg-config --variable=libdir libcares 2>/dev/null || true)"
-	if [ -n "${libdir}" ] && [ -f "${libdir}/libcares.so" ]; then
-		so_path="${libdir}/libcares.so"
-	fi
-
-	if [ -z "${include_dir}" ]; then
-		include_dir="/usr/include"
-	fi
-	if [ -z "${so_path}" ] && [ -f "/usr/lib/x86_64-linux-gnu/libcares.so" ]; then
-		so_path="/usr/lib/x86_64-linux-gnu/libcares.so"
-	fi
-
-	if [ -d "${include_dir}" ] && [ -f "${so_path}" ]; then
-		CARES_INCLUDE_DIR="${include_dir}"
-		CARES_LIBRARY="${so_path}"
-	fi
 }
 
 run_step() {
@@ -122,26 +88,15 @@ run_step() {
 	fi
 }
 
-sanitize_build_env
-resolve_cares
-
 log "xtrader Debug build started. JOBS=${JOBS}; stall notice interval=${STALL_INTERVAL_SECONDS}s"
 log "Full log: ${LOG_FILE}"
-if [ -n "${CARES_INCLUDE_DIR}" ] && [ -n "${CARES_LIBRARY}" ]; then
-	log "Using c-ares include: ${CARES_INCLUDE_DIR}"
-	log "Using c-ares library: ${CARES_LIBRARY}"
-else
-	log "[WARN] c-ares path not resolved from pkg-config; CMake will auto-detect."
+if [ -n "${CONDA_PREFIX:-}" ]; then
+	log "[WARN] Conda is active (${CONDA_PREFIX}); cached or runtime dependencies may come from it."
 fi
 
-CONFIGURE_CMD=(
-	env BOOST_ROOT=/usr/local CMAKE_PREFIX_PATH=/usr/local
+run_step "Configure Debug build" \
+	env BOOST_ROOT=/usr/local CMAKE_PREFIX_PATH=/usr/local \
 	python3 configure.py --mode=debug --disable-dpdk
-)
-if [ -n "${CARES_INCLUDE_DIR}" ] && [ -n "${CARES_LIBRARY}" ]; then
-	CONFIGURE_CMD+=(--cmake-args "-Dc-ares_INCLUDE_DIR=${CARES_INCLUDE_DIR};-Dc-ares_LIBRARY=${CARES_LIBRARY}")
-fi
-run_step "Configure Debug build" "${CONFIGURE_CMD[@]}"
 
 run_step "Build xtrader CLI and demo" \
 	ninja -C build/debug -j"${JOBS}" app_xtrader_cli app_xtrader_demo

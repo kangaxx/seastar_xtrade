@@ -71,4 +71,35 @@ if (c-ares_FOUND)
         IMPORTED_LOCATION ${c-ares_LIBRARY}
         INTERFACE_INCLUDE_DIRECTORIES ${c-ares_INCLUDE_DIRS})
   endif ()
+
+  include (CMakePushCheckState)
+  include (CheckCXXSourceCompiles)
+  cmake_push_check_state (RESET)
+  set (CMAKE_REQUIRED_LIBRARIES c-ares::cares)
+  unset (c-ares_HEADERS_MATCH_LIBRARY CACHE)
+  check_cxx_source_compiles ("
+    #include \"${c-ares_INCLUDE_DIR}/ares.h\"
+    #if ARES_VERSION != ((${c-ares_VERSION_MAJOR} << 16) | (${c-ares_VERSION_MINOR} << 8) | ${c-ares_VERSION_PATCH})
+    #error c-ares version header does not match the selected include directory
+    #endif
+    int main() {
+      auto* volatile base = &ares_library_init;
+      #if ARES_VERSION >= 0x011c00
+      auto* volatile query = &ares_query_dnsrec;
+      if (!query) return 1;
+      #endif
+      #if ARES_VERSION >= 0x012200
+      auto* volatile socket_functions = &ares_set_socket_functions_ex;
+      auto* volatile process = &ares_process_fds;
+      if (!socket_functions || !process) return 1;
+      #endif
+      return !base;
+    }" c-ares_HEADERS_MATCH_LIBRARY)
+  cmake_pop_check_state ()
+  if (NOT c-ares_HEADERS_MATCH_LIBRARY)
+    message (FATAL_ERROR
+      "The selected c-ares headers (${c-ares_INCLUDE_DIR}, version ${c-ares_VERSION}) "
+      "and library (${c-ares_LIBRARY}) are incompatible. Check for conflicting "
+      "header and library installations, then reconfigure with matching paths.")
+  endif ()
 endif ()

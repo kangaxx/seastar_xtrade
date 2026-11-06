@@ -45,7 +45,7 @@
 #include <chrono>
 #include <memory>
 
-#include <ares.h>
+#include SEASTAR_CARES_HEADER
 #include <boost/lexical_cast.hpp>
 
 #include <ostream>
