@@ -524,6 +524,17 @@ seastar_add_test (xtrader_domain
     xtrader_domain_test.cc
     ../../src/xtrader/domain_types.cc)
 
+# Phase 6 portable gate tests; no broker or reactor initialization.
+# Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_phase6_metrics
+  KIND CUSTOM
+  SOURCES
+    xtrader_phase6_metrics_test.cc
+    ../../src/xtrader/performance_metrics.cc
+    ../../src/xtrader/health_check.cc
+  LIBRARIES Threads::Threads)
+target_include_directories(test_unit_xtrader_phase6_metrics PRIVATE ${Seastar_SOURCE_DIR}/include)
+
 seastar_add_test (xtrader_historical_data_manager
   SOURCES
     xtrader_historical_data_manager_test.cc
@@ -545,6 +556,7 @@ seastar_add_test (xtrader_phase4_minimal
     ../../src/xtrader/strategy_lifecycle.cc
     ../../src/xtrader/subscription_registry.cc
     ../../src/xtrader/event_bus.cc
+    ../../src/xtrader/performance_metrics.cc
     ../../src/xtrader/backtest_driver.cc
     ../../src/xtrader/historical_data_manager.cc)
 

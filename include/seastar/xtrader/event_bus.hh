@@ -25,6 +25,7 @@
 #include <seastar/xtrader/strategy_lifecycle.hh>
 
 #include <memory>
+#include <chrono>
 #include <queue>
 #include <vector>
 #include <variant>
@@ -53,6 +54,7 @@ struct market_event {
     domain::market_data raw_md;
 
     uint64_t sequence = 0;
+    std::chrono::steady_clock::time_point queued_at{};
 };
 
 struct event_bus_config {

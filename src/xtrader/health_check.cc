@@ -15,115 +15,113 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+// Phase 6: explicit no-data status and complete latency/error/drop/queue gates.
+// Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
 #include <seastar/xtrader/health_check.hh>
 
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <iomanip>
 #include <sstream>
+#include <stdexcept>
 
 namespace seastar::xtrader {
-
 namespace {
-
 std::string iso8601_now() {
-    auto now = std::chrono::system_clock::now();
-    auto t = std::chrono::system_clock::to_time_t(now);
-    std::ostringstream oss;
-    oss << std::put_time(std::gmtime(&t), "%Y-%m-%dT%H:%M:%SZ");
-    return oss.str();
+    const auto time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm utc{};
+#ifdef _WIN32
+    gmtime_s(&utc, &time);
+#else
+    gmtime_r(&time, &utc);
+#endif
+    std::ostringstream result;
+    result << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
+    return result.str();
+}
 }
 
-} // anonymous namespace
+health_check::health_check(const std::string& source_env, const performance_metrics& metrics)
+    : _source_env(source_env), _metrics(metrics) {}
 
-health_check::health_check(const sstring& source_env)
-    : _source_env(source_env)
-{}
-
-health_report health_check::make_report(const metrics_snapshot& m,
-                                          const sstring& component) const {
-    health_report r;
-    r.component = component;
-    r.metrics = m;
-    r.checked_at = iso8601_now();
-    r.source_env = _source_env;
-
-    bool latency_ok = m.avg_latency_us <= _thresholds.max_avg_latency_us;
-    bool error_ok = m.error_rate <= _thresholds.max_error_rate;
-
-    if (latency_ok && error_ok) {
-        r.status = "healthy";
-        r.within_threshold = true;
-    } else if (!latency_ok && !error_ok) {
-        r.status = "unhealthy";
-        r.within_threshold = false;
-        r.violation_detail = "latency(" + to_sstring(m.avg_latency_us)
-            + "us > " + to_sstring(_thresholds.max_avg_latency_us)
-            + "us) error_rate(" + to_sstring(m.error_rate)
-            + " > " + to_sstring(_thresholds.max_error_rate) + ")";
-    } else if (!latency_ok) {
-        r.status = "degraded";
-        r.within_threshold = false;
-        r.violation_detail = "latency(" + to_sstring(m.avg_latency_us)
-            + "us > " + to_sstring(_thresholds.max_avg_latency_us) + "us)";
-    } else {
-        r.status = "degraded";
-        r.within_threshold = false;
-        r.violation_detail = "error_rate(" + to_sstring(m.error_rate)
-            + " > " + to_sstring(_thresholds.max_error_rate) + ")";
+void health_check::set_gate_thresholds(const gate_threshold& thresholds) {
+    if (!std::isfinite(thresholds.max_avg_latency_us) || thresholds.max_avg_latency_us < 0
+        || !std::isfinite(thresholds.max_error_rate) || thresholds.max_error_rate < 0
+        || thresholds.max_error_rate > 1) {
+        throw std::invalid_argument("health thresholds require nonnegative latency and error rate in [0, 1]");
     }
+    _thresholds = thresholds;
+}
 
-    return r;
+health_report health_check::make_report(const metrics_snapshot& metrics,
+                                       const std::string& component) const {
+    health_report report;
+    report.component = component;
+    report.metrics = metrics;
+    report.checked_at = iso8601_now();
+    report.source_env = _source_env;
+    std::ostringstream violations;
+    unsigned failed = 0;
+    auto check = [&](bool passed, const char* name, auto value, auto limit) {
+        if (!passed) {
+            if (failed++) violations << "; ";
+            violations << name << "(" << value << " > " << limit << ")";
+        }
+    };
+    check(metrics.avg_latency_us <= _thresholds.max_avg_latency_us,
+          "avg_latency_us", metrics.avg_latency_us, _thresholds.max_avg_latency_us);
+    check(metrics.p99_latency_us <= _thresholds.max_p99_latency_us,
+          "p99_upper_us", metrics.p99_latency_us, _thresholds.max_p99_latency_us);
+    check(metrics.error_rate <= _thresholds.max_error_rate,
+          "error_rate", metrics.error_rate, _thresholds.max_error_rate);
+    const auto drop_limit = metrics.name == "order" || metrics.name == "trade"
+        ? _thresholds.max_critical_dropped_per_min : _thresholds.max_dropped_per_min;
+    check(metrics.dropped_last_minute <= drop_limit,
+          "dropped_last_minute", metrics.dropped_last_minute, drop_limit);
+    check(metrics.queue_depth <= _thresholds.max_queue_depth,
+          "queue_depth", metrics.queue_depth, _thresholds.max_queue_depth);
+    report.within_threshold = metrics.total_events > 0 && failed == 0;
+    report.status = failed > 1 ? "unhealthy" : failed ? "degraded"
+        : metrics.total_events ? "healthy" : "unknown";
+    report.violation_detail = failed ? violations.str()
+        : metrics.total_events ? "" : "no latency samples; health is not established";
+    return report;
 }
 
 health_report health_check::check_market_data() const {
-    return make_report(performance_metrics::instance().snapshot_md(),
-                        "market_data");
+    return make_report(_metrics.snapshot_md(), "market_data");
 }
-
 health_report health_check::check_order_path() const {
-    return make_report(performance_metrics::instance().snapshot_order(),
-                        "order_path");
+    return make_report(_metrics.snapshot_order(), "order_path");
 }
-
 health_report health_check::check_trade_path() const {
-    return make_report(performance_metrics::instance().snapshot_trade(),
-                        "trade_path");
+    return make_report(_metrics.snapshot_trade(), "trade_path");
 }
-
 health_report health_check::check_dispatch() const {
-    return make_report(performance_metrics::instance().snapshot_dispatch(),
-                        "dispatch");
+    return make_report(_metrics.snapshot_dispatch(), "dispatch");
 }
-
 health_report health_check::check_drain() const {
-    return make_report(performance_metrics::instance().snapshot_drain(),
-                        "drain");
-}
-
-health_status health_check::aggregate_status() const {
-    bool has_unhealthy = false;
-    bool has_degraded = false;
-
-    auto reports = full_report();
-    for (const auto& r : reports) {
-        if (r.status == "unhealthy") has_unhealthy = true;
-        if (r.status == "degraded") has_degraded = true;
-    }
-
-    if (has_unhealthy) return health_status::unhealthy;
-    if (has_degraded) return health_status::degraded;
-    return health_status::healthy;
+    return make_report(_metrics.snapshot_drain(), "drain");
 }
 
 std::vector<health_report> health_check::full_report() const {
-    return {
-        check_market_data(),
-        check_order_path(),
-        check_trade_path(),
-        check_dispatch(),
-        check_drain(),
-    };
+    std::vector<health_report> reports;
+    for (const auto& snapshot : _metrics.snapshot_all()) {
+        reports.push_back(make_report(snapshot, snapshot.name));
+    }
+    return reports;
 }
 
+health_status health_check::aggregate_status() const {
+    auto status = health_status::healthy;
+    for (const auto& report : full_report()) {
+        if (report.status == "unhealthy") return health_status::unhealthy;
+        if (report.status == "degraded") status = health_status::degraded;
+        else if (report.status == "unknown" && status == health_status::healthy) {
+            status = health_status::unknown;
+        }
+    }
+    return status;
+}
 } // namespace seastar::xtrader

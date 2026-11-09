@@ -17,7 +17,6 @@
  */
 #pragma once
 
-#include <seastar/core/sstring.hh>
 #include <seastar/xtrader/performance_metrics.hh>
 
 #include <cstdint>
@@ -32,22 +31,25 @@ struct gate_threshold {
     double max_error_rate = 0.001;
     uint64_t max_dropped_per_min = 100;
     size_t max_queue_depth = 65536;
+    uint64_t max_p99_latency_us = 5000;
+    uint64_t max_critical_dropped_per_min = 0;
 };
 
 struct health_report {
-    sstring component;
-    sstring status;
+    std::string component;
+    std::string status;
     metrics_snapshot metrics;
     bool within_threshold = true;
-    sstring violation_detail;
-    sstring checked_at;
-    sstring source_env;
+    std::string violation_detail;
+    std::string checked_at;
+    std::string source_env;
 };
 
 enum class health_status {
     healthy,
     degraded,
     unhealthy,
+    unknown,
 };
 
 inline const char* to_string(health_status s) {
@@ -55,15 +57,18 @@ inline const char* to_string(health_status s) {
         case health_status::healthy:    return "healthy";
         case health_status::degraded:   return "degraded";
         case health_status::unhealthy:  return "unhealthy";
+        case health_status::unknown:    return "unknown";
         default: return "unknown";
     }
 }
 
 class health_check {
 public:
-    health_check(const sstring& source_env = "vm");
+    // Phase 6 gates; source: user request, 2026-11-09, GitHub Copilot (Auto).
+    explicit health_check(const std::string& source_env = "vm",
+                          const performance_metrics& metrics = performance_metrics::instance());
 
-    void set_gate_thresholds(const gate_threshold& t) { _thresholds = t; }
+    void set_gate_thresholds(const gate_threshold& t);
     const gate_threshold& thresholds() const noexcept { return _thresholds; }
 
     health_report check_market_data() const;
@@ -78,10 +83,11 @@ public:
 
 private:
     health_report make_report(const metrics_snapshot& m,
-                               const sstring& component) const;
+                               const std::string& component) const;
 
     gate_threshold _thresholds;
-    sstring _source_env;
+    std::string _source_env;
+    const performance_metrics& _metrics;
 };
 
 } // namespace seastar::xtrader

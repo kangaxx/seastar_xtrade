@@ -16,6 +16,7 @@
  * under the License.
  */
 #include <seastar/xtrader/ctp_gateway.hh>
+#include <seastar/xtrader/performance_metrics.hh>
 #include <seastar/xtrader/ctp_spi_adapter.hh>
 #include <seastar/core/smp.hh>
 #include <seastar/core/reactor.hh>
@@ -332,18 +333,31 @@ void ctp_gateway::fill_login_field(CThostFtdcReqUserLoginField* field,
 // ==================== Trading ====================
 
 future<domain::order_status> ctp_gateway::submit_order(const domain::order_request& request) {
+    // Phase 6: measure local submission, not exchange acknowledgement latency.
+    // Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
+    const auto started = performance_metrics::clock::now();
+    auto finish = [started](domain::order_status status) {
+        auto& metrics = performance_metrics::instance();
+        metrics.record_order_latency_us(std::chrono::duration_cast<std::chrono::microseconds>(
+            performance_metrics::clock::now() - started).count());
+        if (status == domain::order_status::submitted) metrics.record_success("order");
+        else metrics.record_error("order");
+        return make_ready_future<domain::order_status>(status);
+    };
     if (_status != gateway_status::ready) {
         std::cerr << "[ERROR] ctp_gateway::submit_order: gateway not ready, status="
                    << static_cast<int>(_status) << std::endl;
-        return make_ready_future<domain::order_status>(domain::order_status::rejected);
+        return finish(domain::order_status::rejected);
     }
 
     if (!request.is_valid()) {
-        return make_ready_future<domain::order_status>(domain::order_status::rejected);
+        std::cerr << "[ERROR] ctp_gateway::submit_order: invalid order request" << std::endl;
+        return finish(domain::order_status::rejected);
     }
 
     if (!_td_api) {
-        return make_ready_future<domain::order_status>(domain::order_status::rejected);
+        std::cerr << "[ERROR] ctp_gateway::submit_order: trader API is unavailable" << std::endl;
+        return finish(domain::order_status::rejected);
     }
 
     // Generate order_ref
@@ -398,11 +412,11 @@ future<domain::order_status> ctp_gateway::submit_order(const domain::order_reque
         std::cerr << "[ERROR] ctp_gateway::submit_order: ReqOrderInsert failed, ret=" << ret << std::endl;
         _pending_orders.update_status(order_ref_str, domain::order_status::rejected);
         _pending_orders.set_error(order_ref_str, "ReqOrderInsert failed");
-        return make_ready_future<domain::order_status>(domain::order_status::rejected);
+        return finish(domain::order_status::rejected);
     }
 
     // Note: actual order status will be returned via OnRtnOrder/OnRspOrderInsert callbacks
-    return make_ready_future<domain::order_status>(domain::order_status::submitted);
+    return finish(domain::order_status::submitted);
 }
 
 future<domain::order_status> ctp_gateway::cancel_order(const sstring& order_sys_id) {
@@ -608,19 +622,23 @@ void ctp_gateway::on_account_query_result(const CThostFtdcTradingAccountField* p
 
 void ctp_gateway::on_market_data(const domain::market_data& data) {
     md_slot slot;
-    slot.capture_ns = seastar::steady_clock_type::now().time_since_epoch().count();
+    slot.capture_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        seastar::steady_clock_type::now().time_since_epoch()).count();
     slot.data = data;
 
     if (!_md_ring.push(slot)) {
+        performance_metrics::instance().record_md_dropped();
         ++_dropped_md_events;
         std::cerr << "[WARN] ctp_gateway: md_ring full, dropped market data for "
                   << data.instrument_id << std::endl;
     }
+    performance_metrics::instance().record_queue_depth("market_data", _md_ring.approx_size());
 }
 
 void ctp_gateway::on_trade_report(const domain::trade_report& report) {
     trader_slot slot;
-    slot.capture_ns = seastar::steady_clock_type::now().time_since_epoch().count();
+    slot.capture_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        seastar::steady_clock_type::now().time_since_epoch()).count();
     slot.type = domain::event_type::trade;
     slot.trade_data = report;
     slot.order_data = domain::order{};
@@ -629,15 +647,18 @@ void ctp_gateway::on_trade_report(const domain::trade_report& report) {
     _pending_orders.update_traded_volume(report.order_ref, report.volume);
 
     if (!_trader_ring.push(slot)) {
+        performance_metrics::instance().record_trade_dropped();
         ++_dropped_trader_events;
         std::cerr << "[ERROR] ctp_gateway: trader_ring full, dropped trade event for "
                   << report.instrument_id << " (CRITICAL: violates zero-drop guarantee)" << std::endl;
     }
+    performance_metrics::instance().record_queue_depth("trade", _trader_ring.approx_size());
 }
 
 void ctp_gateway::on_order_return(const domain::order& order) {
     trader_slot slot;
-    slot.capture_ns = seastar::steady_clock_type::now().time_since_epoch().count();
+    slot.capture_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        seastar::steady_clock_type::now().time_since_epoch()).count();
     slot.type = domain::event_type::order;
     slot.order_data = order;
     slot.trade_data = domain::trade_report{};
@@ -646,15 +667,18 @@ void ctp_gateway::on_order_return(const domain::order& order) {
     _pending_orders.update_status(order.order_ref, order.status);
 
     if (!_trader_ring.push(slot)) {
+        performance_metrics::instance().record_order_dropped();
         ++_dropped_trader_events;
         std::cerr << "[ERROR] ctp_gateway: trader_ring full, dropped order event for "
                   << order.order_sys_id << std::endl;
     }
+    performance_metrics::instance().record_queue_depth("order", _trader_ring.approx_size());
 }
 
 void ctp_gateway::on_cancel_return(const domain::order& order) {
     trader_slot slot;
-    slot.capture_ns = seastar::steady_clock_type::now().time_since_epoch().count();
+    slot.capture_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        seastar::steady_clock_type::now().time_since_epoch()).count();
     slot.type = domain::event_type::cancel;
     slot.order_data = order;
     slot.trade_data = domain::trade_report{};
@@ -662,10 +686,12 @@ void ctp_gateway::on_cancel_return(const domain::order& order) {
     _pending_orders.update_status(order.order_sys_id, order.status);
 
     if (!_trader_ring.push(slot)) {
+        performance_metrics::instance().record_order_dropped();
         ++_dropped_trader_events;
         std::cerr << "[ERROR] ctp_gateway: trader_ring full, dropped cancel event for "
                   << order.order_sys_id << std::endl;
     }
+    performance_metrics::instance().record_queue_depth("order", _trader_ring.approx_size());
 }
 
 void ctp_gateway::on_error(int error_id, const sstring& error_msg) {
@@ -689,6 +715,11 @@ void ctp_gateway::drain_md_ring() {
             break;
         }
 
+        auto& metrics = performance_metrics::instance();
+        metrics.record_md_latency_us(std::chrono::duration_cast<std::chrono::microseconds>(
+            seastar::steady_clock_type::now().time_since_epoch()
+                - std::chrono::nanoseconds(slot.capture_ns)).count());
+        metrics.record_success("market_data");
         const auto target_shard = instrument_shard_id(slot.data.instrument_id, smp::count);
 
         (void)smp::submit_to(target_shard, [slot = std::move(slot)] {
@@ -697,17 +728,35 @@ void ctp_gateway::drain_md_ring() {
 
         ++drained;
     }
+    auto& metrics = performance_metrics::instance();
+    metrics.record_queue_depth("market_data", _md_ring.approx_size());
+    metrics.record_drain_latency_us(std::chrono::duration_cast<std::chrono::microseconds>(
+        seastar::steady_clock_type::now() - start_time).count());
+    metrics.record_success("drain");
 }
 
 void ctp_gateway::drain_trader_ring() {
+    const auto started = performance_metrics::clock::now();
+    auto& metrics = performance_metrics::instance();
     trader_slot slot;
 
     while (_trader_ring.pop(slot)) {
         unsigned target_shard;
 
         if (slot.type == domain::event_type::trade) {
+            metrics.record_trade_latency_us(std::chrono::duration_cast<std::chrono::microseconds>(
+                seastar::steady_clock_type::now().time_since_epoch()
+                    - std::chrono::nanoseconds(slot.capture_ns)).count());
             if (_trade_handler) {
-                _trade_handler(slot.trade_data);
+                try {
+                    _trade_handler(slot.trade_data);
+                } catch (...) {
+                    metrics.record_error("trade");
+                    throw;
+                }
+                metrics.record_success("trade");
+            } else {
+                metrics.record_error("trade");
             }
             continue;
         } else if (slot.type == domain::event_type::order) {
@@ -719,6 +768,12 @@ void ctp_gateway::drain_trader_ring() {
         (void)smp::submit_to(target_shard, [slot = std::move(slot)] {
         });
     }
+    // Order/trade share the same queue; depths must not be added together.
+    metrics.record_queue_depth("order", _trader_ring.approx_size());
+    metrics.record_queue_depth("trade", _trader_ring.approx_size());
+    metrics.record_drain_latency_us(std::chrono::duration_cast<std::chrono::microseconds>(
+        performance_metrics::clock::now() - started).count());
+    metrics.record_success("drain");
 }
 
 } // namespace seastar::xtrader

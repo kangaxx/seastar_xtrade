@@ -16,6 +16,7 @@
  * under the License.
  */
 #include <seastar/xtrader/event_bus.hh>
+#include <seastar/xtrader/performance_metrics.hh>
 #include <seastar/core/future-util.hh>
 #include <seastar/core/reactor.hh>
 
@@ -50,8 +51,11 @@ future<> event_bus::stop() {
 }
 
 bool event_bus::enqueue(const market_event& event) {
+    // Phase 6 transport observations; no implication of live trading acceptance.
+    // Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
     if (_queue.size() >= _cfg.max_queue_depth) {
         ++_metrics.dropped;
+        performance_metrics::instance().record_dropped("dispatch");
         std::cerr << "[WARN] event_bus: queue full, dropping event for "
                   << event.instrument_id << " seq=" << event.sequence << std::endl;
         return false;
@@ -59,9 +63,11 @@ bool event_bus::enqueue(const market_event& event) {
 
     market_event e = event;
     e.sequence = ++_sequence_counter;
+    e.queued_at = performance_metrics::clock::now();
     _queue.push(std::move(e));
     ++_metrics.enqueued;
     _metrics.queue_depth = _queue.size();
+    performance_metrics::instance().record_queue_depth("dispatch", _queue.size());
     return true;
 }
 
@@ -81,6 +87,9 @@ void event_bus::dispatch_batch() {
 
         auto event = std::move(_queue.front());
         _queue.pop();
+        performance_metrics::instance().record_dispatch_latency_us(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                performance_metrics::clock::now() - event.queued_at).count());
 
         auto event_k = (event.type == market_event_type::bar)
             ? event_kind::bar : event_kind::tick;
@@ -103,8 +112,10 @@ void event_bus::dispatch_batch() {
                 return strategy->on_market_data(*ctx, md);
             }).then([strategy] {
                 strategy->stats().signal_count++;
+                performance_metrics::instance().record_success("dispatch");
             }).handle_exception([strategy_id = sub.strategy_id,
                                  instrument_id = event.instrument_id](std::exception_ptr ep) {
+                performance_metrics::instance().record_error("dispatch");
                 try {
                     std::rethrow_exception(ep);
                 } catch (const std::exception& e) {
@@ -129,6 +140,11 @@ void event_bus::dispatch_batch() {
     }
 
     _metrics.queue_depth = _queue.size();
+    auto& metrics = performance_metrics::instance();
+    metrics.record_queue_depth("dispatch", _queue.size());
+    const auto snapshot = metrics.snapshot_dispatch();
+    _metrics.dispatch_latency_p50_us = snapshot.p50_latency_us;
+    _metrics.dispatch_latency_p99_us = snapshot.p99_latency_us;
 }
 
 } // namespace seastar::xtrader

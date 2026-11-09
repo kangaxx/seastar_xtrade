@@ -71,3 +71,14 @@ target_include_directories(app_xtrader_cli PRIVATE
     ${CMAKE_SOURCE_DIR}/include)
 
 target_link_libraries(app_xtrader_cli PRIVATE hiredis)
+
+# Phase 6 offline probe: deliberately does not link CTP or start a reactor.
+# Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
+add_executable(app_xtrader_phase6_probe
+    ../../tools/xtrader_phase6_probe.cc
+    ../../src/xtrader/performance_metrics.cc
+    ../../src/xtrader/health_check.cc)
+target_include_directories(app_xtrader_phase6_probe PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(app_xtrader_phase6_probe PRIVATE Threads::Threads)
+set_target_properties(app_xtrader_phase6_probe PROPERTIES OUTPUT_NAME xtrader_phase6_probe)
+add_dependencies(apps app_xtrader_phase6_probe)

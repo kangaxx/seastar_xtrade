@@ -11,6 +11,7 @@
 #include <seastar/xtrader/backtest_driver.hh>
 #include <seastar/xtrader/event_bus.hh>
 #include <seastar/xtrader/strategy_lifecycle.hh>
+#include <seastar/xtrader/performance_metrics.hh>
 
 #include <filesystem>
 #include <fstream>
@@ -91,6 +92,23 @@ private:
 };
 
 } // namespace
+
+// Phase 6 transport instrumentation; source: user request, 2026-11-09.
+// Signature: GitHub Copilot (Auto).
+SEASTAR_THREAD_TEST_CASE(xtrader_phase6_event_bus_records_backpressure) {
+    auto& metrics = seastar::xtrader::performance_metrics::instance();
+    metrics.reset();
+    seastar::xtrader::event_bus bus({.max_queue_depth = 1});
+    seastar::xtrader::market_event event;
+    event.instrument_id = "offline-test";
+    BOOST_REQUIRE(bus.enqueue(event));
+    BOOST_REQUIRE(!bus.enqueue(event));
+    const auto snapshot = metrics.snapshot_dispatch();
+    BOOST_REQUIRE_EQUAL(snapshot.queue_depth, 1);
+    BOOST_REQUIRE_EQUAL(snapshot.peak_queue_depth, 1);
+    BOOST_REQUIRE_EQUAL(snapshot.dropped_events, 1);
+    metrics.reset();
+}
 
 SEASTAR_THREAD_TEST_CASE(xtrader_phase4_lifecycle_wires_runtime_and_subscriptions) {
     seastar::xtrader::subscription_registry registry;
