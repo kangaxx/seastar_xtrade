@@ -48,6 +48,29 @@ ssh xtrader-vbox "bash -lc 'cd /home/vboxuser/workspace/seastar; ninja -C build/
 ssh xtrader-vbox "bash -lc 'cd /home/vboxuser/workspace/seastar; ls -lh build/debug/apps/xtrader/xtrader_cli build/debug/apps/xtrader/xtrader_demo'"
 ```
 
+### 3.4 一键脚本（Debug / Release）
+
+在 Linux 项目根目录运行：
+
+```bash
+bash ./build_xtrader.sh
+bash ./build_xtrader_demo_release.sh
+```
+
+两个脚本分别配置 Debug / Release，均编译 CLI 和 demo，并运行各自的 `--help` 检查。
+Release 产物位于 `build/release/apps/xtrader/xtrader_cli` 和
+`build/release/apps/xtrader/xtrader_demo`，不会覆盖 `build/debug` 中的产物。
+
+默认并行数为 `JOBS=2`，低内存机器可使用：
+
+```bash
+JOBS=1 bash ./build_xtrader_demo_release.sh
+```
+
+两者均支持 `STALL_INTERVAL_SECONDS`（默认 60 秒）：阶段无输出时提示仍在运行，不会自动终止编译。
+Release 完整日志保存在 `build/logs/build_xtrader_demo_release_*.log`。
+依赖准备要求与 Debug 相同；检测到 Conda 时只给出警告，不自动退出或清理环境。
+
 ## 4. 运行方法
 
 ### 4.1 CLI 入口（推荐先测）
