@@ -168,7 +168,7 @@ future<> ctp_gateway::start() {
     _callback_state = std::make_unique<ctp_gateway_callback_state>();
     _callback_bridge_missing.store(false, std::memory_order_relaxed);
     _callback_failure_reported = false;
-    _trading_day.clear();
+    _trading_day = sstring{};
     _front_id = 0;
     _session_id = 0;
     _order_ref_seq = 0;
