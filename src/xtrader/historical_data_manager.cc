@@ -18,12 +18,81 @@
 #include <seastar/xtrader/historical_data_manager.hh>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 
 namespace seastar::xtrader {
+namespace {
+
+double parse_number(const std::string& value, historical_load_mode mode) {
+    size_t consumed = 0;
+    const double result = std::stod(value, &consumed);
+    if (mode == historical_load_mode::strict &&
+        (consumed != value.size() || !std::isfinite(result))) {
+        throw std::invalid_argument("invalid numeric value");
+    }
+    return result;
+}
+
+bool parse_bar_row(const std::vector<std::string>& cols, historical_load_mode mode,
+                   historical_bar& bar) {
+    if (cols.size() < 6 || (mode == historical_load_mode::strict && cols.size() < 7)) {
+        return false;
+    }
+    try {
+        bar.datetime = cols[0];
+        bar.open = parse_number(cols[1], mode);
+        bar.high = parse_number(cols[2], mode);
+        bar.low = parse_number(cols[3], mode);
+        bar.close = parse_number(cols[4], mode);
+        bar.volume = parse_number(cols[5], mode);
+        if (cols.size() > 6) {
+            bar.open_interest = parse_number(cols[6], mode);
+        }
+        return mode != historical_load_mode::strict ||
+            (bar.volume >= 0.0 && bar.open_interest >= 0.0 && bar.high >= bar.low &&
+             bar.open >= bar.low && bar.open <= bar.high &&
+             bar.close >= bar.low && bar.close <= bar.high);
+    } catch (const std::invalid_argument&) {
+        return false;
+    } catch (const std::out_of_range&) {
+        return false;
+    }
+}
+
+bool valid_bar_header(const std::vector<std::string>& cols) {
+    if (cols.size() < 7) {
+        return false;
+    }
+    constexpr std::array<const char*, 6> expected{
+        "open", "high", "low", "close", "volume", "open_interest"
+    };
+    auto lower = [] (std::string value) {
+        std::transform(value.begin(), value.end(), value.begin(),
+            [] (unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        return value;
+    };
+    auto first = lower(cols.front());
+    if (first.compare(0, 3, "\xEF\xBB\xBF") == 0) {
+        first.erase(0, 3);
+    }
+    if (first != "date" && first != "datetime" && first != "timestamp") {
+        return false;
+    }
+    for (size_t index = 0; index < expected.size(); ++index) {
+        if (lower(cols[index + 1]) != expected[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
 
 historical_data_manager::historical_data_manager(std::filesystem::path data_root)
     : _data_root(std::move(data_root)) {
@@ -71,32 +140,46 @@ bool historical_data_manager::load_key_value_file(
         }
     }
 
-    return true;
+    return !input.bad();
 }
 
 std::vector<dataset_manifest> historical_data_manager::scan_datasets(std::string* warning) const {
     std::vector<dataset_manifest> datasets;
+    if (warning != nullptr) {
+        warning->clear();
+    }
 
     std::error_code ec;
     if (!std::filesystem::exists(_data_root, ec) || !std::filesystem::is_directory(_data_root, ec)) {
         if (warning != nullptr) {
-            *warning = "Historical data root not found: " + _data_root.generic_string();
+            *warning = "Cannot inspect historical data root: " + _data_root.generic_string();
+            if (ec) {
+                *warning += ": " + ec.message();
+            }
         }
         return datasets;
     }
 
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(_data_root, ec)) {
+    std::filesystem::recursive_directory_iterator it(_data_root, ec);
+    const std::filesystem::recursive_directory_iterator end;
+    while (!ec && it != end) {
+        const auto& entry = *it;
+        const bool is_regular_file = entry.is_regular_file(ec);
         if (ec) {
             break;
         }
 
-        if (!entry.is_regular_file() || entry.path().filename() != "dataset-manifest.conf") {
+        if (!is_regular_file || entry.path().filename() != "dataset-manifest.conf") {
+            it.increment(ec);
             continue;
         }
 
         std::vector<std::pair<std::string, std::string>> kv;
         if (!load_key_value_file(entry.path(), kv)) {
-            continue;
+            if (warning != nullptr) {
+                *warning = "Cannot read dataset manifest: " + entry.path().generic_string();
+            }
+            return datasets;
         }
 
         std::unordered_map<std::string, std::string> values;
@@ -122,6 +205,12 @@ std::vector<dataset_manifest> historical_data_manager::scan_datasets(std::string
         }
 
         datasets.push_back(std::move(m));
+        it.increment(ec);
+    }
+
+    if (ec && warning != nullptr) {
+        *warning = "Cannot scan historical data root: " + _data_root.generic_string()
+            + ": " + ec.message();
     }
 
     return datasets;
@@ -140,7 +229,7 @@ std::optional<dataset_manifest> historical_data_manager::find_dataset(
         }
     }
 
-    if (warning != nullptr) {
+    if (warning != nullptr && warning->empty()) {
         *warning = "Dataset not found under data root: " + _data_root.generic_string();
     }
     return std::nullopt;
@@ -149,9 +238,20 @@ std::optional<dataset_manifest> historical_data_manager::find_dataset(
 bool historical_data_manager::load_bars(
     const dataset_manifest& dataset,
     std::vector<historical_bar>& bars,
-    std::string* warning) const {
+    std::string* warning,
+    historical_load_mode mode) const {
 
     bars.clear();
+    if (warning != nullptr) {
+        warning->clear();
+    }
+
+    if (mode != historical_load_mode::permissive && mode != historical_load_mode::strict) {
+        if (warning != nullptr) {
+            *warning = "Invalid historical data load mode";
+        }
+        return false;
+    }
 
     if (dataset.active_file_path.empty()) {
         if (warning != nullptr) {
@@ -170,43 +270,70 @@ bool historical_data_manager::load_bars(
 
     std::string line;
     bool header_skipped = false;
+    size_t expected_columns = 0;
+    size_t line_number = 0;
     while (std::getline(file, line)) {
-        if (!header_skipped) {
-            header_skipped = true;
-            if (line.find("datetime") != std::string::npos || line.find("date") != std::string::npos) {
-                continue;
-            }
+        ++line_number;
+        if (trim(line).empty()) {
+            continue;
         }
-
         std::stringstream ss(line);
         std::string cell;
         std::vector<std::string> cols;
         while (std::getline(ss, cell, ',')) {
             cols.push_back(trim(cell));
         }
-        if (cols.size() < 6) {
-            continue;
+        if (!line.empty() && line.back() == ',') {
+            cols.emplace_back();
+        }
+        if (!header_skipped) {
+            header_skipped = true;
+            if (mode == historical_load_mode::strict) {
+                if (!valid_bar_header(cols)) {
+                    if (warning != nullptr) {
+                        *warning = "Invalid dataset header in " + dataset.active_file_path.generic_string()
+                            + " at line " + std::to_string(line_number);
+                    }
+                    return false;
+                }
+                expected_columns = cols.size();
+                continue;
+            }
+            if (line.find("datetime") != std::string::npos || line.find("date") != std::string::npos) {
+                continue;
+            }
         }
 
-        try {
-            historical_bar bar;
-            bar.datetime = cols[0];
-            bar.open = std::stod(cols[1]);
-            bar.high = std::stod(cols[2]);
-            bar.low = std::stod(cols[3]);
-            bar.close = std::stod(cols[4]);
-            bar.volume = std::stod(cols[5]);
-            if (cols.size() > 6) {
-                bar.open_interest = std::stod(cols[6]);
+        historical_bar bar;
+        if ((mode == historical_load_mode::strict && cols.size() != expected_columns) ||
+            !parse_bar_row(cols, mode, bar)) {
+            if (mode == historical_load_mode::strict) {
+                bars.clear();
+                if (warning != nullptr) {
+                    *warning = "Invalid dataset row in " + dataset.active_file_path.generic_string()
+                        + " at line " + std::to_string(line_number);
+                }
+                return false;
             }
-            bars.push_back(std::move(bar));
-        } catch (const std::exception&) {
             continue;
         }
+        bar.source_line = line_number;
+        bars.push_back(std::move(bar));
     }
 
-    if (bars.empty() && warning != nullptr) {
-        *warning = "Dataset file exists but no valid rows were loaded: " + dataset.active_file_path.generic_string();
+    if (file.bad()) {
+        bars.clear();
+        if (warning != nullptr) {
+            *warning = "Error reading dataset: " + dataset.active_file_path.generic_string();
+        }
+        return false;
+    }
+
+    if (bars.empty()) {
+        if (warning != nullptr) {
+            *warning = "Dataset file exists but no valid rows were loaded: " + dataset.active_file_path.generic_string();
+        }
+        return mode != historical_load_mode::strict;
     }
 
     return true;

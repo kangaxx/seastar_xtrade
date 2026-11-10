@@ -22,17 +22,20 @@
 #include <ThostFtdcTraderApi.h>
 
 #include <string>
+#include <cstdint>
 
 namespace seastar::xtrader {
 
 class ctp_gateway;
+struct ctp_market_callback;
+struct ctp_trader_callback;
 
 /**
  * MdSpiAdapter wraps CThostFtdcMdSpi to integrate with Seastar.
  *
  * All CTP callbacks are invoked from CTP's internal thread.
- * This adapter's only responsibility is to serialize data into
- * the SPSC ring buffer and return immediately (zero blocking).
+ * Callback methods copy SDK records into a bounded multi-producer queue;
+ * the owner shard later converts and delivers them.
  *
  * Key callbacks:
  * - OnRtnDepthMarketData: Market data push
@@ -41,7 +44,7 @@ class ctp_gateway;
  */
 class MdSpiAdapter : public CThostFtdcMdSpi {
 public:
-    explicit MdSpiAdapter(ctp_gateway* gateway) noexcept;
+    explicit MdSpiAdapter(ctp_gateway* gateway, uint64_t session_generation) noexcept;
     ~MdSpiAdapter() = default;
 
     MdSpiAdapter(const MdSpiAdapter&) = delete;
@@ -57,17 +60,25 @@ public:
                         bool bIsLast) override;
     void OnRtnDepthMarketData(CThostFtdcDepthMarketDataField* pDepthMarketData) override;
     void OnRspError(CThostFtdcRspInfoField* pRspInfo, int nRequestID, bool bIsLast) override;
+    void deliver(ctp_market_callback& event);
 
 private:
+    void deliver_front_connected();
+    void deliver_front_disconnected(int reason);
+    void deliver_login(CThostFtdcRspUserLoginField* response, CThostFtdcRspInfoField* info,
+                       int request_id, bool is_last);
+    void deliver_market_data(CThostFtdcDepthMarketDataField* data);
+    void deliver_error(CThostFtdcRspInfoField* info, int request_id, bool is_last);
     ctp_gateway* _gateway;
+    uint64_t _session_generation;
 };
 
 /**
  * TraderSpiAdapter wraps CThostFtdcTraderSpi to integrate with Seastar.
  *
  * All CTP callbacks are invoked from CTP's internal thread.
- * This adapter's only responsibility is to serialize data into
- * the SPSC ring buffer and return immediately (zero blocking).
+ * Callback methods copy SDK records into a bounded multi-producer queue;
+ * the owner shard later converts and delivers them.
  *
  * Key callbacks that produce trader events:
  * - OnRtnOrder: Order status changes (accepted, partial fill, filled, canceled, rejected)
@@ -78,7 +89,7 @@ private:
  */
 class TraderSpiAdapter : public CThostFtdcTraderSpi {
 public:
-    explicit TraderSpiAdapter(ctp_gateway* gateway) noexcept;
+    explicit TraderSpiAdapter(ctp_gateway* gateway, uint64_t session_generation) noexcept;
     ~TraderSpiAdapter() = default;
 
     TraderSpiAdapter(const TraderSpiAdapter&) = delete;
@@ -104,12 +115,16 @@ public:
                           CThostFtdcRspInfoField* pRspInfo,
                           int nRequestID,
                           bool bIsLast) override;
+    void OnErrRtnOrderInsert(CThostFtdcInputOrderField* pInputOrder,
+                             CThostFtdcRspInfoField* pRspInfo) override;
     void OnRtnOrder(CThostFtdcOrderField* pOrder) override;
     void OnRtnTrade(CThostFtdcTradeField* pTrade) override;
     void OnRspOrderAction(CThostFtdcInputOrderActionField* pInputOrderAction,
                           CThostFtdcRspInfoField* pRspInfo,
                           int nRequestID,
                           bool bIsLast) override;
+    void OnErrRtnOrderAction(CThostFtdcOrderActionField* pOrderAction,
+                             CThostFtdcRspInfoField* pRspInfo) override;
     void OnRspQryTradingAccount(CThostFtdcTradingAccountField* pTradingAccount,
                                  CThostFtdcRspInfoField* pRspInfo,
                                  int nRequestID,
@@ -119,9 +134,30 @@ public:
                                   int nRequestID,
                                   bool bIsLast) override;
     void OnRspError(CThostFtdcRspInfoField* pRspInfo, int nRequestID, bool bIsLast) override;
+    void deliver(ctp_trader_callback& event);
 
 private:
+    void deliver_front_connected();
+    void deliver_front_disconnected(int reason);
+    void deliver_authenticate(CThostFtdcRspAuthenticateField* response, CThostFtdcRspInfoField* info,
+                              int request_id, bool is_last);
+    void deliver_login(CThostFtdcRspUserLoginField* response, CThostFtdcRspInfoField* info,
+                       int request_id, bool is_last);
+    void deliver_logout(CThostFtdcUserLogoutField* response, CThostFtdcRspInfoField* info,
+                        int request_id, bool is_last);
+    void deliver_order_insert(CThostFtdcInputOrderField* order, CThostFtdcRspInfoField* info,
+                              int request_id, bool is_last);
+    void deliver_order(CThostFtdcOrderField* order);
+    void deliver_trade(CThostFtdcTradeField* trade);
+    void deliver_order_action(CThostFtdcInputOrderActionField* action, CThostFtdcRspInfoField* info,
+                              int request_id, bool is_last);
+    void deliver_account(CThostFtdcTradingAccountField* account, CThostFtdcRspInfoField* info,
+                         int request_id, bool is_last);
+    void deliver_position(CThostFtdcInvestorPositionField* position, CThostFtdcRspInfoField* info,
+                          int request_id, bool is_last);
+    void deliver_error(CThostFtdcRspInfoField* info, int request_id, bool is_last);
     ctp_gateway* _gateway;
+    uint64_t _session_generation;
 };
 
 } // namespace seastar::xtrader

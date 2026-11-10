@@ -1,5 +1,9 @@
 # Phase 3: CTP 行情/交易桥接任务清单
 
+> 2026-11-09 修订说明：以下勾选保留为历史编码记录，不代表完整功能验收。
+> 实际订阅/行情下游、启动查询同步、订单回报路由、线程所有权及重连对账仍需收口，
+> 以[开发计划修订版](../../../docs/xtrader_development_plan.md)的 R3-01 至 R3-05 为当前执行清单。
+
 ## 3.1 CTP SPI 适配器实现
 - [x] 3.1.1 创建 `ctp_spi_adapter.hh`
 - [x] 3.1.2 创建 `MdSpiAdapter` 类（继承 CThostFtdcMdSpi）

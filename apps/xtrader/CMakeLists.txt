@@ -29,6 +29,7 @@ seastar_add_app(xtrader_demo SOURCES
     ../../src/xtrader/domain_types.cc
     ../../src/xtrader/ctp_gateway.cc
     ../../src/xtrader/ctp_spi_adapter.cc
+    ../../src/xtrader/ctp_spi_bridge.cc
     ../../src/xtrader/pending_order_manager.cc
     ../../src/xtrader/runtime_engine.cc
     ../../src/xtrader/runtime_sharded.cc
@@ -40,6 +41,25 @@ seastar_add_app(xtrader_demo SOURCES
     ../../src/xtrader/redis_metadata.cc
     ../../src/xtrader/web_api_handler.cc
     ../../src/xtrader/backtest_driver.cc
+    # B3 offline matching is compiled but not connected to a trading entry.
+    # Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+    ../../src/xtrader/simulated_order_book.cc
+    # B2 offline fund reservations are not connected to the runtime.
+    # Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+    ../../src/xtrader/position_ledger.cc
+    ../../src/xtrader/offline_fund_ledger.cc
+    ../../src/xtrader/offline_account_ledger.cc
+    ../../src/xtrader/offline_futures_economics.cc
+    ../../src/xtrader/offline_futures_account.cc
+    ../../src/xtrader/offline_simulated_execution.cc
+    ../../src/xtrader/offline_bar_timeline.cc
+    ../../src/xtrader/offline_bar_replay.cc
+    ../../src/xtrader/offline_bar_strategy_replay.cc
+    ../../src/xtrader/ctp_query_tracker.cc
+    ../../src/xtrader/market_data_pipeline.cc
+    ../../src/xtrader/market_record_format.cc
+    ../../src/xtrader/paper_market_session.cc
+    ../../src/xtrader/recovery_coordinator.cc
     ../../src/xtrader/historical_data_manager.cc
     ../../src/xtrader/redis_sync_client.cc
     ../../src/xtrader/performance_metrics.cc
@@ -71,6 +91,46 @@ target_include_directories(app_xtrader_cli PRIVATE
     ${CMAKE_SOURCE_DIR}/include)
 
 target_link_libraries(app_xtrader_cli PRIVATE hiredis)
+
+# B1: separate fail-closed entry binaries; no CTP libraries are linked here.
+# Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
+foreach(entry IN ITEMS replay paper ctp_sim live)
+    add_executable(app_xtrader_${entry} xtrader_entry_disabled.cc)
+    target_compile_definitions(app_xtrader_${entry} PRIVATE XTRADER_ENTRY_NAME="xtrader_${entry}")
+    set_target_properties(app_xtrader_${entry} PROPERTIES OUTPUT_NAME xtrader_${entry})
+    add_dependencies(apps app_xtrader_${entry})
+endforeach()
+
+if(Seastar_TESTING)
+    add_custom_target(test_unit_xtrader_cli_config_safety_run
+        COMMAND ${CMAKE_COMMAND}
+            -DCLI=$<TARGET_FILE:app_xtrader_cli>
+            -DFIXTURE_BASE=${CMAKE_CURRENT_BINARY_DIR}
+            -P ${Seastar_SOURCE_DIR}/tests/unit/xtrader_cli_config_safety_test.cmake
+        DEPENDS app_xtrader_cli
+        USES_TERMINAL
+        VERBATIM)
+    add_test(NAME Seastar.unit.xtrader_cli_config_safety
+        COMMAND ${CMAKE_COMMAND} --build ${Seastar_BINARY_DIR}
+            --target test_unit_xtrader_cli_config_safety_run)
+    set_tests_properties(Seastar.unit.xtrader_cli_config_safety
+        PROPERTIES TIMEOUT ${Seastar_TEST_TIMEOUT})
+
+    add_custom_target(test_unit_xtrader_entry_isolation_run
+        COMMAND ${CMAKE_COMMAND}
+            -DREPLAY=$<TARGET_FILE:app_xtrader_replay>
+            -DPAPER=$<TARGET_FILE:app_xtrader_paper>
+            -DCTP_SIM=$<TARGET_FILE:app_xtrader_ctp_sim>
+            -DLIVE=$<TARGET_FILE:app_xtrader_live>
+            -P ${Seastar_SOURCE_DIR}/tests/unit/xtrader_entry_isolation_test.cmake
+        DEPENDS app_xtrader_replay app_xtrader_paper app_xtrader_ctp_sim app_xtrader_live
+        USES_TERMINAL)
+    add_test(NAME Seastar.unit.xtrader_entry_isolation
+        COMMAND ${CMAKE_COMMAND} --build ${Seastar_BINARY_DIR}
+            --target test_unit_xtrader_entry_isolation_run)
+    set_tests_properties(Seastar.unit.xtrader_entry_isolation
+        PROPERTIES TIMEOUT ${Seastar_TEST_TIMEOUT})
+endif()
 
 # Phase 6 offline probe: deliberately does not link CTP or start a reactor.
 # Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).

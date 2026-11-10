@@ -19,6 +19,7 @@
 
 #include <seastar/core/sstring.hh>
 
+#include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -28,6 +29,7 @@ namespace seastar::xtrader {
 
 struct historical_bar {
     std::string datetime;
+    size_t source_line = 0;
     double open = 0.0;
     double high = 0.0;
     double low = 0.0;
@@ -76,6 +78,11 @@ struct dataset_manifest {
     std::string status = "unknown";
 };
 
+enum class historical_load_mode {
+    permissive,
+    strict,
+};
+
 class historical_data_manager {
 public:
     explicit historical_data_manager(std::filesystem::path data_root = "/data/x_trader_data");
@@ -93,7 +100,8 @@ public:
     [[nodiscard]] bool load_bars(
         const dataset_manifest& dataset,
         std::vector<historical_bar>& bars,
-        std::string* warning = nullptr) const;
+        std::string* warning = nullptr,
+        historical_load_mode mode = historical_load_mode::permissive) const;
 
 private:
     static bool load_key_value_file(

@@ -19,6 +19,7 @@
 
 #include <seastar/xtrader/domain_types.hh>
 
+#include <cmath>
 #include <iostream>
 
 namespace seastar::xtrader {
@@ -38,7 +39,7 @@ public:
     }
 
     // Apply account delta atomically
-    // Returns: true if applied, false if service not initialized
+    // Returns false if the service is uninitialized or the delta is invalid.
     bool apply_delta(const domain::account_delta& delta) {
         if (!_initialized) {
             std::cerr << "[ERROR] trading_account_service::apply_delta: "
@@ -46,7 +47,11 @@ public:
                       << delta.instrument_id << std::endl;
             return false;
         }
-        _account.apply_delta(delta);
+        if (!_account.apply_delta(delta)) {
+            std::cerr << "[ERROR] trading_account_service::apply_delta: "
+                      << "invalid account delta for " << delta.instrument_id << std::endl;
+            return false;
+        }
         return true;
     }
 
@@ -55,12 +60,19 @@ public:
         return _account;
     }
 
-    // Initialize account with pre-balance
-    void initialize(double pre_balance) {
+    // B2: initialize an offline account once with an explicit finite balance.
+    // Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+    [[nodiscard]] bool initialize(double pre_balance) {
+        if (_initialized || !std::isfinite(pre_balance) || pre_balance < 0.0) {
+            std::cerr << "[ERROR] trading_account_service::initialize: "
+                      << "account is already initialized or initial balance is invalid" << std::endl;
+            return false;
+        }
         _account.pre_balance = pre_balance;
         _account.balance = pre_balance;
         _account.available = pre_balance;
         _initialized = true;
+        return true;
     }
 
     // Get initialized state
@@ -73,6 +85,12 @@ public:
 
     // Check if has sufficient balance for margin
     [[nodiscard]] bool has_sufficient_balance(double required_margin) const noexcept {
+        if (!_initialized || !std::isfinite(required_margin) || required_margin < 0.0
+            || !std::isfinite(_account.available)) {
+            std::cerr << "[ERROR] trading_account_service::has_sufficient_balance: "
+                      << "account is uninitialized or the requested amount is invalid" << std::endl;
+            return false;
+        }
         return _account.available >= required_margin;
     }
 

@@ -21,15 +21,15 @@
 
 #include <atomic>
 #include <array>
+#include <type_traits>
 
 namespace seastar::xtrader {
 
 // SPSC (Single Producer Single Consumer) Lock-Free Ring Buffer
-// Used for bridging CTP callback threads (producers) with Seastar Reactor threads (consumers).
+// In the CTP gateway both producer and consumer run on the owner shard.
 //
 // Constraints:
-// - push() is only called from the CTP callback thread (single producer)
-// - pop() is only called from the Seastar Reactor thread (single consumer)
+// - push() has a single producer and pop() has a single consumer
 // - Capacity must be a power of 2
 // - head_ and tail_ are on separate cache lines (alignas(64)) to avoid false sharing
 //
@@ -40,9 +40,9 @@ class spsc_ring_buffer {
 public:
     static constexpr size_t capacity = Capacity;
 
-    // Called from CTP callback thread (single producer)
+    // Called by the single producer
     // Returns true if push succeeded, false if queue is full.
-    bool push(const Slot& item) noexcept {
+    bool push(const Slot& item) noexcept(std::is_nothrow_copy_assignable_v<Slot>) {
         auto tail = _tail.load(std::memory_order_relaxed);
         auto head = _head.load(std::memory_order_acquire);
         if (tail - head >= Capacity) {
@@ -53,9 +53,9 @@ public:
         return true;
     }
 
-    // Called from Seastar Reactor thread (single consumer)
+    // Called by the single consumer
     // Returns true if pop succeeded, false if queue is empty.
-    bool pop(Slot& item) noexcept {
+    bool pop(Slot& item) noexcept(std::is_nothrow_copy_assignable_v<Slot>) {
         auto head = _head.load(std::memory_order_relaxed);
         auto tail = _tail.load(std::memory_order_acquire);
         if (head >= tail) {
@@ -116,14 +116,14 @@ struct trader_slot {
 //       - 在 5 GB 内存的构建机上引发整机换页风暴，编译无法正常完成；
 //       - ctp_gateway 单实例体积达 22.6 MB，构造与拷贝开销同样不可接受。
 // 调整：改为 2048 (2^11) / 4096 (2^12)。该深度仍远高于 drain 侧消费能力
-//       （md 每 500us 最多 1024 条，trader 每 100us 不限条数排空），
+//       （md 每 500us 最多 1024 条，trader 每 100us 最多 1024 条），
 //       可覆盖开盘快照风暴与断线重连后回报突发的排队需求。
 // 效果：ctp_gateway 由 22.6 MB 降至约 1.9 MB；同一 TU 实测 5.9 秒 / 873 MB
 //       编译通过（历史测量）；2026-11-05 在 GCC 11 上仍复现初始化展开，
 //       因此额外使用上方用户定义的槽构造函数，避免逐成员聚合展开。
 //
 // 注意：容量必须是 2 的幂（见上方 static_assert）；队列满时 push() 返回 false，
-//       调用方需依赖 _dropped_md_events / _dropped_trader_events 观测丢弃。
+//       调用方必须记录丢失并停止交易，等待对账。
 
 inline constexpr size_t md_ring_capacity = 2048;     // 2^11, must be power of 2
 inline constexpr size_t trader_ring_capacity = 4096; // 2^12, must be power of 2

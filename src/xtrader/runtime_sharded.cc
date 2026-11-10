@@ -18,134 +18,200 @@
 #include <seastar/xtrader/runtime_sharded.hh>
 #include <seastar/core/smp.hh>
 
+#include <cmath>
+#include <iostream>
 #include <stdexcept>
-#include <memory>
 
 namespace seastar::xtrader {
 
-runtime_sharded::runtime_sharded(unsigned account_shard) noexcept
-    : _account_shard_id(account_shard)
+runtime_sharded::runtime_sharded(runtime_sharded_config config) noexcept
+    : _account_shard_id(config.account_shard)
+    , _offline_initial_balance(config.offline_initial_balance)
 {}
 
+void runtime_sharded::set_gateway_shard(unsigned shard) {
+    if (this_shard_id() != default_gateway_shard) {
+        throw std::logic_error("runtime must be controlled from gateway shard 0");
+    }
+    if (_state != lifecycle_state::stopped) {
+        throw std::logic_error("cannot change gateway shard while runtime is active");
+    }
+    _gateway_shard = shard;
+}
+
+// B1: reject invalid shard layouts and await every handler installation.
+// Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
 future<> runtime_sharded::start() {
-    if (_engines.local_is_initialized()) {
+    if (this_shard_id() != default_gateway_shard) {
+        return make_exception_future<>(std::runtime_error("runtime must be started on gateway shard 0"));
+    }
+    if (_state == lifecycle_state::running) {
         return make_ready_future<>();
     }
-
-    if (_account_shard_id != _gateway_shard) {
-        std::cerr << "[FATAL] runtime_sharded::start: "
-                  << "account_shard(" << _account_shard_id
-                  << ") != gateway_shard(" << _gateway_shard
-                  << "). Phase 3 requires same-shard configuration. "
-                  << "Set both to a single shard (e.g. 0)." << std::endl;
-        return make_exception_future<>(std::runtime_error(
-            "account_shard must equal gateway_shard in Phase 3"));
+    if (_state != lifecycle_state::stopped) {
+        return make_exception_future<>(std::runtime_error("runtime is not stopped"));
     }
-
-    auto failures = std::make_shared<unsigned>(0);
-
-    return _engines.start().then([this, failures] {
+    if (_account_shard_id != _gateway_shard ||
+        _gateway_shard != default_gateway_shard ||
+        _gateway_shard >= this_smp_shard_count()) {
+        std::cerr << "[FATAL] runtime_sharded::start: "
+                  << "account_shard=" << _account_shard_id
+                  << ", gateway_shard=" << _gateway_shard
+                  << ". The current CTP gateway and account must both use shard 0."
+                  << std::endl;
+        return make_exception_future<>(std::runtime_error(
+            "account and gateway must use the available gateway shard 0"));
+    }
+    if (!_offline_initial_balance || !std::isfinite(*_offline_initial_balance) ||
+        *_offline_initial_balance < 0.0) {
+        return make_exception_future<>(std::runtime_error(
+            "an explicit finite offline initial balance is required; live accounts are not supported"));
+    }
+    if (_requests.is_closed()) {
+        _requests = gate{};
+    }
+    _state = lifecycle_state::starting;
+    _order_handler_ready = false;
+    return _engines.start().then([this] {
         return _engines.invoke_on_all(
             [account_shard = _account_shard_id,
-             gateway_shard = _gateway_shard,
-             failures] (runtime_engine& engine) {
+             gateway_shard = _gateway_shard] (runtime_engine& engine) {
             engine.set_account_shard(account_shard);
             engine.set_gateway_shard(gateway_shard);
-
-            if (this_shard_id() == account_shard) {
-                if (!engine.init_account_service(1000000.0)) {
-                    std::cerr << "[FATAL] runtime_sharded::start: "
-                              << "account service initialization failed on shard "
-                              << this_shard_id()
-                              << ". Cannot start - will cause position/account mismatch!"
-                              << std::endl;
-                    ++(*failures);
-                }
-            }
-
             return engine.start();
-        }).then([failures] {
-            if (*failures > 0) {
-                std::cerr << "[FATAL] runtime_sharded::start: "
-                          << *failures
-                          << " shard(s) failed to initialize. Aborting start!"
-                          << std::endl;
-                return make_exception_future<>(
-                    std::runtime_error("Account service initialization failed"));
+        });
+    }).then([this] {
+        return _engines.invoke_on(_account_shard_id, [balance = *_offline_initial_balance](runtime_engine& engine) {
+            if (!engine.init_account_service(balance)) {
+                throw std::runtime_error("account service initialization failed");
             }
-            return make_ready_future<>();
+        });
+    }).then([this] {
+        _state = lifecycle_state::running;
+    }).handle_exception([this](std::exception_ptr ep) {
+        if (!_engines.local_is_initialized()) {
+            _state = lifecycle_state::stopped;
+            return make_exception_future<>(ep);
+        }
+        return _engines.stop().then_wrapped([this, ep](future<> stopped) {
+            if (stopped.failed()) {
+                std::cerr << "[ERROR] runtime_sharded::start: cleanup failed after startup error"
+                          << std::endl;
+                stopped.ignore_ready_future();
+                _state = lifecycle_state::failed;
+            } else {
+                stopped.get();
+                _state = lifecycle_state::stopped;
+            }
+            return make_exception_future<>(ep);
         });
     });
 }
 
 future<> runtime_sharded::stop() {
-    if (!_engines.local_is_initialized()) {
+    if (this_shard_id() != default_gateway_shard) {
+        return make_exception_future<>(std::runtime_error("runtime must be stopped on gateway shard 0"));
+    }
+    if (_state == lifecycle_state::stopped) {
         return make_ready_future<>();
     }
-
-    return _engines.stop();
-}
-
-void runtime_sharded::set_order_handler(order_handler_t handler) {
-    (void)_engines.invoke_on_all(
-        [handler = std::move(handler)] (runtime_engine& engine) mutable {
-        engine.set_order_handler(std::move(handler));
-    });
-}
-
-void runtime_sharded::set_trade_handler(trade_handler_t handler) {
-    (void)_engines.invoke_on_all(
-        [handler = std::move(handler)] (runtime_engine& engine) mutable {
-        engine.set_trade_handler(std::move(handler));
-    });
-}
-
-future<domain::order_status> runtime_sharded::submit_order(const domain::order_request& request) {
-    if (!_engines.local_is_initialized()) {
-        return make_ready_future<domain::order_status>(domain::order_status::rejected);
+    if (_state != lifecycle_state::running) {
+        return make_exception_future<>(std::runtime_error("runtime cannot stop in its current state"));
     }
-
-    return _engines.invoke_on(_gateway_shard, [request] (runtime_engine& engine) {
-        return engine.submit_order(request);
-    });
-}
-
-future<> runtime_sharded::apply_trade_report(const domain::trade_report& report) {
-    if (!_engines.local_is_initialized()) {
+    _state = lifecycle_state::stopping;
+    _order_handler_ready = false;
+    return _requests.close().then([this] {
+        return _engines.stop();
+    }).then_wrapped([this](future<> stopped) {
+        if (stopped.failed()) {
+            _state = lifecycle_state::failed;
+            return make_exception_future<>(stopped.get_exception());
+        }
+        stopped.get();
+        _state = lifecycle_state::stopped;
         return make_ready_future<>();
+    });
+}
+
+future<> runtime_sharded::set_order_handler(order_handler_t handler) {
+    if (this_shard_id() != default_gateway_shard ||
+        _state != lifecycle_state::running || !handler || _order_handler_installing) {
+        return make_exception_future<>(std::runtime_error(
+            "runtime is not running, order handler is empty, or installation is in progress"));
     }
-
-    auto account_shard = _account_shard_id;
-
-    return _engines.invoke_on(account_shard, [report] (runtime_engine& engine) {
-        engine.apply_trade_to_position(report);
-
-        domain::account_delta delta;
-        delta.instrument_id = report.instrument_id;
-        delta.direction = report.direction;
-        delta.offset = report.offset;
-        delta.traded_volume = report.volume;
-        delta.price = report.price;
-        delta.commission = report.commission;
-
-        return engine.submit_delta_local(delta).then([](bool ok) {
-            if (!ok) {
-                std::cerr << "[ERROR] runtime_sharded::apply_trade_report: "
-                          << "submit_delta_local failed" << std::endl;
+    _order_handler_ready = false;
+    _order_handler_installing = true;
+    return try_with_gate(_requests, [this, handler = std::move(handler)] () mutable {
+        return _engines.invoke_on(_gateway_shard, [handler = std::move(handler)] (runtime_engine& engine) mutable {
+            engine.set_order_handler(std::move(handler));
+        }).then_wrapped([this](future<> installed) {
+            _order_handler_installing = false;
+            if (installed.failed()) {
+                return make_exception_future<>(installed.get_exception());
+            }
+            installed.get();
+            if (_state == lifecycle_state::running) {
+                _order_handler_ready = true;
             }
             return make_ready_future<>();
         });
     });
 }
 
-future<std::optional<domain::position_view>> runtime_sharded::snapshot_positions() {
-    if (!_engines.local_is_initialized()) {
-        return make_ready_future<std::optional<domain::position_view>>(std::nullopt);
+future<> runtime_sharded::set_trade_handler(trade_handler_t handler) {
+    if (this_shard_id() != default_gateway_shard ||
+        _state != lifecycle_state::running || !handler) {
+        return make_exception_future<>(std::runtime_error("runtime is not running or trade handler is empty"));
+    }
+    return make_exception_future<>(std::runtime_error(
+        "trade callbacks are unavailable until position and account settlement are integrated"));
+}
+
+future<domain::order_status> runtime_sharded::submit_order(const domain::order_request& request) {
+    if (this_shard_id() != default_gateway_shard ||
+        _state != lifecycle_state::running || !_order_handler_ready) {
+        std::cerr << "[ERROR] runtime_sharded::submit_order: runtime or order handler is not ready"
+                  << std::endl;
+        return make_ready_future<domain::order_status>(domain::order_status::rejected);
+    }
+    if (!request.is_valid() || !std::isfinite(request.price)) {
+        std::cerr << "[ERROR] runtime_sharded::submit_order: invalid order request" << std::endl;
+        return make_ready_future<domain::order_status>(domain::order_status::rejected);
+    }
+    return try_with_gate(_requests, [this, request] {
+        return _engines.invoke_on(_gateway_shard, [request] (runtime_engine& engine) {
+            return engine.submit_order(request);
+        });
+    });
+}
+
+future<> runtime_sharded::apply_trade_report(const domain::trade_report& report) {
+    if (this_shard_id() != default_gateway_shard || _state != lifecycle_state::running) {
+        return make_exception_future<>(std::runtime_error("runtime is not running"));
+    }
+    if (report.trade_id.empty() || report.instrument_id.empty() || report.volume <= 0 ||
+        !std::isfinite(report.price) || report.price <= 0.0 ||
+        !std::isfinite(report.commission) || report.commission < 0.0) {
+        return make_exception_future<>(std::runtime_error("invalid trade report"));
     }
 
-    return _engines.invoke_on(_gateway_shard, [] (runtime_engine& engine) {
-        return make_ready_future<std::optional<domain::position_view>>(
-            engine.positions().snapshot());
+    return make_exception_future<>(std::runtime_error(
+        "trade settlement is unavailable until position and account accounting are integrated"));
+}
+
+future<std::optional<domain::position_view>> runtime_sharded::snapshot_positions() {
+    if (this_shard_id() != default_gateway_shard) {
+        return make_exception_future<std::optional<domain::position_view>>(
+            std::runtime_error("runtime must be queried on gateway shard 0"));
+    }
+    if (_state != lifecycle_state::running) {
+        return make_ready_future<std::optional<domain::position_view>>(std::nullopt);
+    }
+    return try_with_gate(_requests, [this] {
+        return _engines.invoke_on(_account_shard_id, [] (runtime_engine& engine) {
+            return make_ready_future<std::optional<domain::position_view>>(
+                engine.positions().snapshot());
+        });
     });
 }
 

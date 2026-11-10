@@ -18,6 +18,7 @@
 #pragma once
 
 #include <seastar/core/future.hh>
+#include <seastar/core/gate.hh>
 #include <seastar/core/sharded.hh>
 #include <seastar/xtrader/runtime_engine.hh>
 
@@ -25,6 +26,11 @@
 #include <optional>
 
 namespace seastar::xtrader {
+
+struct runtime_sharded_config {
+    unsigned account_shard = 0;
+    std::optional<double> offline_initial_balance;
+};
 
 class runtime_sharded {
 public:
@@ -34,14 +40,14 @@ public:
     using order_handler_t = runtime_engine::order_handler_t;
     using trade_handler_t = runtime_engine::trade_handler_t;
 
-    explicit runtime_sharded(unsigned account_shard = default_account_shard) noexcept;
-    void set_gateway_shard(unsigned shard) noexcept { _gateway_shard = shard; }
+    explicit runtime_sharded(runtime_sharded_config config = {}) noexcept;
+    void set_gateway_shard(unsigned shard);
 
     future<> start();
     future<> stop();
 
-    void set_order_handler(order_handler_t handler);
-    void set_trade_handler(trade_handler_t handler);
+    future<> set_order_handler(order_handler_t handler);
+    future<> set_trade_handler(trade_handler_t handler);
 
     [[nodiscard]] future<domain::order_status> submit_order(const domain::order_request& request);
     future<> apply_trade_report(const domain::trade_report& report);
@@ -51,9 +57,18 @@ public:
     [[nodiscard]] unsigned gateway_shard() const noexcept { return _gateway_shard; }
 
 private:
+    // B1: make handler installation and shutdown observable to callers.
+    // Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
+    enum class lifecycle_state { stopped, starting, running, stopping, failed };
+
     sharded<runtime_engine> _engines;
+    gate _requests;
     unsigned _account_shard_id = default_account_shard;
     unsigned _gateway_shard = default_gateway_shard;
+    std::optional<double> _offline_initial_balance;
+    lifecycle_state _state = lifecycle_state::stopped;
+    bool _order_handler_ready = false;
+    bool _order_handler_installing = false;
 };
 
 } // namespace seastar::xtrader

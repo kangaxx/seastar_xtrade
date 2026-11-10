@@ -65,7 +65,9 @@ public:
     void set_gateway_shard(unsigned shard_id) noexcept { _gateway_shard = shard_id; }
     unsigned gateway_shard() const noexcept { return _gateway_shard; }
 
-    bool init_account_service(double pre_balance = 1000000.0);
+    // B1: require an explicit balance; never infer a live account from a default.
+    // Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
+    bool init_account_service(double pre_balance);
 
     bool is_account_service_ready() const noexcept {
         return _account_shard == this_shard_id() && _account_service != nullptr;
@@ -77,7 +79,7 @@ public:
 private:
     domain::position_book _positions;
     std::unique_ptr<trading_account_service> _account_service;
-    unsigned _account_shard = 1;
+    unsigned _account_shard = 0;
     unsigned _gateway_shard = 0;
     bool _is_gateway_shard = false;
     bool _started = false;

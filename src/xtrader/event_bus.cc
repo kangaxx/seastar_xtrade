@@ -17,11 +17,13 @@
  */
 #include <seastar/xtrader/event_bus.hh>
 #include <seastar/xtrader/performance_metrics.hh>
+#include <seastar/core/coroutine.hh>
 #include <seastar/core/future-util.hh>
 #include <seastar/core/reactor.hh>
 
 #include <chrono>
 #include <iostream>
+#include <stdexcept>
 
 namespace seastar::xtrader {
 
@@ -35,8 +37,19 @@ future<> event_bus::start() {
     if (_started) {
         return make_ready_future<>();
     }
+    if (_stopping || _dispatch_error || _callback_error) {
+        return make_exception_future<>(std::runtime_error("event bus is stopping or has failed"));
+    }
+    if (!_strategy_mgr || !_sub_registry || !_cfg.max_queue_depth ||
+        !_cfg.batch_size || !_cfg.dispatch_budget_us) {
+        return make_exception_future<>(std::runtime_error("event bus dependencies or configuration are invalid"));
+    }
+    if (_dispatch_gate.is_closed()) {
+        _dispatch_gate = gate{};
+    }
 
-    _dispatch_timer.set_callback([this] { dispatch_batch(); });
+    _stopped = false;
+    _dispatch_timer.set_callback([this] { schedule_dispatch(); });
     _dispatch_timer.arm_periodic(
         std::chrono::microseconds(_cfg.dispatch_budget_us));
 
@@ -45,18 +58,76 @@ future<> event_bus::start() {
 }
 
 future<> event_bus::stop() {
+    if (_stopping) {
+        return make_exception_future<>(std::runtime_error("event bus is already stopping"));
+    }
+    if (!_started) {
+        if (!_queue.empty()) {
+            return make_exception_future<>(std::runtime_error("cannot stop an unstarted event bus with pending events"));
+        }
+        _stopped = true;
+        if (_dispatch_error) {
+            return make_exception_future<>(_dispatch_error);
+        }
+        return _callback_error ? make_exception_future<>(_callback_error) : make_ready_future<>();
+    }
+
     _dispatch_timer.cancel();
     _started = false;
-    return make_ready_future<>();
+    _stopping = true;
+    _dispatch_done.broadcast();
+    schedule_dispatch();
+    return _dispatch_gate.close().then([this] {
+        _stopping = false;
+        _stopped = true;
+        if (_dispatch_error) {
+            return make_exception_future<>(_dispatch_error);
+        }
+        if (!_queue.empty()) {
+            return make_exception_future<>(std::runtime_error("event bus stopped with pending events"));
+        }
+        return _callback_error ? make_exception_future<>(_callback_error) : make_ready_future<>();
+    });
+}
+
+// B3: wait for accepted work and surface strategy callback failures to replay.
+// Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
+future<> event_bus::drain() {
+    if (!_started || _stopping) {
+        return make_exception_future<>(std::runtime_error("event bus is not running"));
+    }
+    return with_gate(_dispatch_gate, [this] {
+        schedule_dispatch();
+        return _dispatch_done.wait([this] {
+            return !_started || _stopping || _dispatch_error || _callback_error ||
+                (!_dispatching && _queue.empty());
+        }).then([this] {
+            if (_dispatch_error) {
+                return make_exception_future<>(_dispatch_error);
+            }
+            if (_callback_error) {
+                return make_exception_future<>(_callback_error);
+            }
+            if (!_started || _stopping) {
+                return make_exception_future<>(std::runtime_error("event bus stopped while draining"));
+            }
+            return make_ready_future<>();
+        });
+    });
 }
 
 bool event_bus::enqueue(const market_event& event) {
     // Phase 6 transport observations; no implication of live trading acceptance.
     // Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
-    if (_queue.size() >= _cfg.max_queue_depth) {
+    const bool unsupported = event.type != market_event_type::tick && event.type != market_event_type::bar;
+    if (unsupported ||
+        _stopping || _stopped || _dispatch_error || _callback_error ||
+        _queue.size() >= _cfg.max_queue_depth) {
         ++_metrics.dropped;
         performance_metrics::instance().record_dropped("dispatch");
-        std::cerr << "[WARN] event_bus: queue full, dropping event for "
+        std::cerr << "[WARN] event_bus: "
+                  << (unsupported ? "unsupported event type" : "unavailable or queue full")
+                  << ", dropping event for "
                   << event.instrument_id << " seq=" << event.sequence << std::endl;
         return false;
     }
@@ -71,22 +142,55 @@ bool event_bus::enqueue(const market_event& event) {
     return true;
 }
 
-void event_bus::dispatch_batch() {
-    if (!_strategy_mgr || !_sub_registry) {
+// B1: serialize delivery and drain accepted events before shutdown completes.
+// Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
+void event_bus::schedule_dispatch() {
+    if (_dispatching || _queue.empty() || _dispatch_error) {
         return;
     }
+    _dispatching = true;
+    (void)with_gate(_dispatch_gate, [this] {
+        return dispatch_batch().then_wrapped([this](future<> result) {
+            _dispatching = false;
+            if (result.failed()) {
+                _dispatch_error = result.get_exception();
+                performance_metrics::instance().record_error("dispatch");
+                try {
+                    std::rethrow_exception(_dispatch_error);
+                } catch (const std::exception& e) {
+                    std::cerr << "[ERROR] event_bus: dispatch failed: " << e.what() << std::endl;
+                } catch (...) {
+                    std::cerr << "[ERROR] event_bus: dispatch failed with unknown error" << std::endl;
+                }
+            } else {
+                result.get();
+            }
+            _dispatch_done.broadcast();
+        });
+    });
+}
 
+future<> event_bus::dispatch_batch() {
     auto start = seastar::steady_clock_type::now();
     size_t dispatched = 0;
 
-    while (dispatched < _cfg.batch_size && !_queue.empty()) {
+    while (!_queue.empty()) {
         auto elapsed = seastar::steady_clock_type::now() - start;
-        if (static_cast<size_t>(elapsed.count() / 1000) > _cfg.dispatch_budget_us) {
+        if (!_stopping && dispatched > 0 && (dispatched >= _cfg.batch_size ||
+            std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count() >=
+                static_cast<long>(_cfg.dispatch_budget_us))) {
             break;
+        }
+        if (_stopping && dispatched >= _cfg.batch_size) {
+            dispatched = 0;
+            start = seastar::steady_clock_type::now();
+            co_await seastar::yield();
         }
 
         auto event = std::move(_queue.front());
         _queue.pop();
+        _metrics.queue_depth = _queue.size();
+        performance_metrics::instance().record_queue_depth("dispatch", _queue.size());
         performance_metrics::instance().record_dispatch_latency_us(
             std::chrono::duration_cast<std::chrono::microseconds>(
                 performance_metrics::clock::now() - event.queued_at).count());
@@ -96,46 +200,58 @@ void event_bus::dispatch_batch() {
 
         auto subscribers = _sub_registry->find_subscribers(
             event.instrument_id, event_k);
+        if (event.require_subscriber && subscribers.empty()) {
+            throw std::runtime_error("replay event has no subscriber: " + event.instrument_id);
+        }
 
         for (const auto& sub : subscribers) {
             auto strategy = _strategy_mgr->get_strategy(sub.strategy_id);
             if (!strategy || strategy->state() != strategy_state::running) {
-                continue;
-            }
-
-            auto* ctx = _strategy_mgr->get_strategy_context(sub.strategy_id);
-            if (!ctx) {
-                continue;
-            }
-
-            futurize_invoke([strategy, ctx, md = event.raw_md] () mutable {
-                return strategy->on_market_data(*ctx, md);
-            }).then([strategy] {
-                strategy->stats().signal_count++;
-                performance_metrics::instance().record_success("dispatch");
-            }).handle_exception([strategy_id = sub.strategy_id,
-                                 instrument_id = event.instrument_id](std::exception_ptr ep) {
-                performance_metrics::instance().record_error("dispatch");
-                try {
-                    std::rethrow_exception(ep);
-                } catch (const std::exception& e) {
-                    std::cerr << "[ERROR] event_bus: on_market_data FAILED, strategy="
-                              << strategy_id << ", instrument="
-                              << instrument_id << ", error=" << e.what()
-                              << std::endl;
-                } catch (...) {
-                    std::cerr << "[ERROR] event_bus: on_market_data FAILED, strategy="
-                              << strategy_id << ", instrument="
-                              << instrument_id << ", unknown error"
-                              << std::endl;
+                if (event.require_subscriber) {
+                    throw std::runtime_error("replay subscriber is not running: " + sub.strategy_id);
                 }
-                return make_ready_future<>();
-            });
+                continue;
+            }
 
-            strategy->stats().queue_depth++;
-            ++dispatched;
+            try {
+                if (event.type == market_event_type::bar) {
+                    co_await _strategy_mgr->dispatch_bar(sub.strategy_id, domain::bar_data{
+                        .instrument_id = event.instrument_id,
+                        .exchange_id = event.exchange_id,
+                        .calendar_date = event.calendar_date,
+                        .timestamp = event.timestamp,
+                        .timeframe = event.timeframe,
+                        .open_price = event.open_price,
+                        .high_price = event.high_price,
+                        .low_price = event.low_price,
+                        .close_price = event.close_price,
+                        .volume = event.volume,
+                        .open_interest = event.open_interest,
+                    });
+                } else {
+                    co_await _strategy_mgr->dispatch_market_data(sub.strategy_id, event.raw_md);
+                }
+                performance_metrics::instance().record_success("dispatch");
+            } catch (const std::exception& e) {
+                if (!_callback_error) {
+                    _callback_error = std::current_exception();
+                }
+                performance_metrics::instance().record_error("dispatch");
+                std::cerr << "[ERROR] event_bus: market callback FAILED, strategy="
+                          << sub.strategy_id << ", instrument=" << event.instrument_id
+                          << ", error=" << e.what() << std::endl;
+            } catch (...) {
+                if (!_callback_error) {
+                    _callback_error = std::current_exception();
+                }
+                performance_metrics::instance().record_error("dispatch");
+                std::cerr << "[ERROR] event_bus: market callback FAILED, strategy="
+                          << sub.strategy_id << ", instrument=" << event.instrument_id
+                          << ", unknown error" << std::endl;
+            }
         }
 
+        ++dispatched;
         ++_metrics.dispatched;
     }
 
@@ -145,6 +261,7 @@ void event_bus::dispatch_batch() {
     const auto snapshot = metrics.snapshot_dispatch();
     _metrics.dispatch_latency_p50_us = snapshot.p50_latency_us;
     _metrics.dispatch_latency_p99_us = snapshot.p99_latency_us;
+    co_return;
 }
 
 } // namespace seastar::xtrader

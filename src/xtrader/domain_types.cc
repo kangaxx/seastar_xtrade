@@ -18,6 +18,7 @@
 #include <seastar/xtrader/domain_types.hh>
 
 #include <algorithm>
+#include <cmath>
 
 namespace seastar::xtrader::domain {
 
@@ -81,34 +82,47 @@ void position_book::apply_trade(const position_delta& delta) {
     }
 }
 
-void trading_account::apply_delta(const account_delta& delta) noexcept {
-    // Update margin
-    curr_margin += delta.margin_change;
-
-    // Update commission (always deducted from balance)
-    commission += delta.commission;
-
-    // Update close profit (for close operations)
-    close_profit += delta.close_profit_change;
-
-    // Calculate trading day balance change
-    // - For open: add margin, deduct from available
-    // - For close: release margin, add profit, deduct commission
-    double balance_change = 0.0;
-
-    if (delta.offset == offset_flag::open) {
-        // Opening position: reserve margin, no P&L yet
-        balance_change = -delta.margin_change;
-    } else {
-        // Closing position: release margin, add profit, deduct commission
-        balance_change = delta.margin_change + delta.close_profit_change;
+// B2: reject inconsistent account state or malformed settlement deltas atomically.
+// Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+bool trading_account::apply_delta(const account_delta& delta) noexcept {
+    const bool valid_direction = delta.direction == side::buy || delta.direction == side::sell;
+    const bool valid_offset = delta.offset == offset_flag::open || delta.offset == offset_flag::close
+        || delta.offset == offset_flag::close_today || delta.offset == offset_flag::close_yesterday;
+    if (!valid_direction || !valid_offset || delta.traded_volume < 0
+        || !std::isfinite(delta.price) || delta.price < 0.0
+        || !std::isfinite(delta.commission) || delta.commission < 0.0
+        || !std::isfinite(delta.margin_change) || !std::isfinite(delta.close_profit_change)
+        || (delta.offset == offset_flag::open && delta.close_profit_change != 0.0)) {
+        return false;
+    }
+    if (!std::isfinite(pre_balance) || !std::isfinite(balance) || !std::isfinite(available)
+        || !std::isfinite(curr_margin) || curr_margin < 0.0
+        || !std::isfinite(frozen_margin) || frozen_margin < 0.0
+        || !std::isfinite(frozen_commission) || frozen_commission < 0.0
+        || !std::isfinite(commission) || commission < 0.0
+        || !std::isfinite(close_profit) || !std::isfinite(position_profit)) {
+        return false;
     }
 
-    balance += balance_change;
+    const bool is_open = delta.offset == offset_flag::open;
+    const double next_margin = curr_margin + delta.margin_change;
+    const double next_commission = commission + delta.commission;
+    const double next_close_profit = close_profit + (is_open ? 0.0 : delta.close_profit_change);
+    const double next_balance = balance - delta.commission
+        + (is_open ? 0.0 : delta.close_profit_change);
+    const double next_available = next_balance - next_margin - frozen_margin - frozen_commission;
+    if (!std::isfinite(next_margin) || next_margin < 0.0
+        || !std::isfinite(next_commission) || !std::isfinite(next_close_profit)
+        || !std::isfinite(next_balance) || !std::isfinite(next_available)) {
+        return false;
+    }
 
-    // Update available: balance - frozen_margin - frozen_commission
-    // Note: frozen values are managed separately via frozen_margin/frozen_commission
-    available = balance - curr_margin - frozen_margin;
+    curr_margin = next_margin;
+    commission = next_commission;
+    close_profit = next_close_profit;
+    balance = next_balance;
+    available = next_available;
+    return true;
 }
 
 } // namespace seastar::xtrader::domain

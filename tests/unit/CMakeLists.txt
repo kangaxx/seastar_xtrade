@@ -524,6 +524,189 @@ seastar_add_test (xtrader_domain
     xtrader_domain_test.cc
     ../../src/xtrader/domain_types.cc)
 
+# B2 account initialization and settlement validation without a broker.
+# Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_account_service
+  SOURCES
+    xtrader_account_service_test.cc
+    ../../src/xtrader/domain_types.cc
+    ../../src/xtrader/runtime_engine.cc)
+
+seastar_add_test (xtrader_position_ledger
+  SOURCES
+    xtrader_position_ledger_test.cc
+    ../../src/xtrader/position_ledger.cc)
+
+# B2 offline fund reservations and explicit monetary settlement inputs.
+# Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_offline_fund_ledger
+  SOURCES
+    xtrader_offline_fund_ledger_test.cc
+    ../../src/xtrader/offline_fund_ledger.cc)
+
+# B2 staged position/fund coordination and failure atomicity.
+# Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_offline_account_ledger
+  SOURCES
+    xtrader_offline_account_ledger_test.cc
+    ../../src/xtrader/position_ledger.cc
+    ../../src/xtrader/offline_fund_ledger.cc
+    ../../src/xtrader/offline_account_ledger.cc)
+
+# B2 explicit offline futures fee, margin, and close-profit model.
+# Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_offline_futures_economics
+  SOURCES
+    xtrader_offline_futures_economics_test.cc
+    ../../src/xtrader/position_ledger.cc
+    ../../src/xtrader/offline_fund_ledger.cc
+    ../../src/xtrader/offline_account_ledger.cc
+    ../../src/xtrader/offline_futures_economics.cc)
+
+# B2 one-day offline FIFO lots coordinated with the atomic account.
+# Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_offline_futures_account
+  SOURCES
+    xtrader_offline_futures_account_test.cc
+    ../../src/xtrader/position_ledger.cc
+    ../../src/xtrader/offline_fund_ledger.cc
+    ../../src/xtrader/offline_account_ledger.cc
+    ../../src/xtrader/offline_futures_economics.cc
+    ../../src/xtrader/offline_futures_account.cc)
+
+# B3 atomic offline order-book and futures-account coordination.
+# Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_offline_simulated_execution
+  SOURCES
+    xtrader_offline_simulated_execution_test.cc
+    ../../src/xtrader/position_ledger.cc
+    ../../src/xtrader/offline_fund_ledger.cc
+    ../../src/xtrader/offline_account_ledger.cc
+    ../../src/xtrader/offline_futures_economics.cc
+    ../../src/xtrader/offline_futures_account.cc
+    ../../src/xtrader/simulated_order_book.cc
+    ../../src/xtrader/offline_simulated_execution.cc)
+
+# B3 explicit bar timestamp semantics and lookahead-free event ordering.
+# Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_offline_bar_timeline
+  SOURCES
+    xtrader_offline_bar_timeline_test.cc
+    ../../src/xtrader/position_ledger.cc
+    ../../src/xtrader/offline_fund_ledger.cc
+    ../../src/xtrader/offline_account_ledger.cc
+    ../../src/xtrader/offline_futures_economics.cc
+    ../../src/xtrader/offline_futures_account.cc
+    ../../src/xtrader/simulated_order_book.cc
+    ../../src/xtrader/offline_simulated_execution.cc
+    ../../src/xtrader/offline_bar_timeline.cc)
+
+# B3 isolated callback replay: bar boundaries, order results, and account state.
+# Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_offline_bar_replay
+  SOURCES
+    xtrader_offline_bar_replay_test.cc
+    ../../src/xtrader/position_ledger.cc
+    ../../src/xtrader/offline_fund_ledger.cc
+    ../../src/xtrader/offline_account_ledger.cc
+    ../../src/xtrader/offline_futures_economics.cc
+    ../../src/xtrader/offline_futures_account.cc
+    ../../src/xtrader/simulated_order_book.cc
+    ../../src/xtrader/offline_simulated_execution.cc
+    ../../src/xtrader/offline_bar_timeline.cc
+    ../../src/xtrader/offline_bar_replay.cc)
+
+# B3 existing strategy lifecycle connected to isolated offline bar replay.
+# Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_offline_bar_strategy_replay
+  SOURCES
+    xtrader_offline_bar_strategy_replay_test.cc
+    ../../src/xtrader/domain_types.cc
+    ../../src/xtrader/strategy_base.cc
+    ../../src/xtrader/strategy_lifecycle.cc
+    ../../src/xtrader/subscription_registry.cc
+    ../../src/xtrader/event_bus.cc
+    ../../src/xtrader/performance_metrics.cc
+    ../../src/xtrader/backtest_driver.cc
+    ../../src/xtrader/historical_data_manager.cc
+    ../../src/xtrader/position_ledger.cc
+    ../../src/xtrader/offline_fund_ledger.cc
+    ../../src/xtrader/offline_account_ledger.cc
+    ../../src/xtrader/offline_futures_economics.cc
+    ../../src/xtrader/offline_futures_account.cc
+    ../../src/xtrader/simulated_order_book.cc
+    ../../src/xtrader/offline_simulated_execution.cc
+    ../../src/xtrader/offline_bar_timeline.cc
+    ../../src/xtrader/offline_bar_replay.cc
+    ../../src/xtrader/offline_bar_strategy_replay.cc)
+
+# B4 offline request correlation and query timeout handling; no CTP connection.
+# Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_ctp_query_tracker
+  SOURCES
+    xtrader_ctp_query_tracker_test.cc
+    ../../src/xtrader/ctp_query_tracker.cc)
+
+# B5/B6 internal components only; no CTP libraries or external services.
+# Source: development plan B5-B8, 2026-11-10. Signature: GitHub Copilot (gpt-6-astra).
+seastar_add_test (xtrader_market_pipeline
+  SOURCES
+    xtrader_market_pipeline_test.cc
+    ../../src/xtrader/market_data_pipeline.cc
+    ../../src/xtrader/market_record_format.cc
+    ../../src/xtrader/paper_market_session.cc
+    ../../src/xtrader/position_ledger.cc
+    ../../src/xtrader/offline_fund_ledger.cc
+    ../../src/xtrader/offline_account_ledger.cc
+    ../../src/xtrader/offline_futures_economics.cc
+    ../../src/xtrader/offline_futures_account.cc
+    ../../src/xtrader/simulated_order_book.cc
+    ../../src/xtrader/offline_simulated_execution.cc)
+
+seastar_add_test (xtrader_recovery_coordinator
+  SOURCES
+    xtrader_recovery_coordinator_test.cc
+    ../../src/xtrader/recovery_coordinator.cc
+    ../../src/xtrader/ctp_query_tracker.cc)
+
+find_package (Python3 QUIET COMPONENTS Interpreter)
+if (Python3_Interpreter_FOUND)
+  add_test (NAME Seastar.unit.xtrader_acceptance
+    COMMAND ${Python3_EXECUTABLE} -B ${Seastar_SOURCE_DIR}/tests/unit/xtrader_acceptance_test.py)
+  set_tests_properties (Seastar.unit.xtrader_acceptance PROPERTIES TIMEOUT ${Seastar_TEST_TIMEOUT})
+else ()
+  message (STATUS "Python3 unavailable: xtrader_acceptance test is not registered")
+endif ()
+
+# B4 bounded POD callback queue; no CTP API or external connection.
+# Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_bounded_callback_queue
+  SOURCES xtrader_bounded_callback_queue_test.cc)
+
+# B4 copied SDK callback payloads; includes headers but does not link CTP.
+# Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_ctp_callback_bridge
+  SOURCES xtrader_ctp_callback_bridge_test.cc)
+target_include_directories (test_unit_xtrader_ctp_callback_bridge PRIVATE
+  ${Seastar_SOURCE_DIR}/api/ctp/v6.7.2/linux64)
+
+# B4 pending-order identity/status guards and fixed SDK field validation.
+# Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_pending_order_manager
+  SOURCES
+    xtrader_pending_order_manager_test.cc
+    ../../src/xtrader/pending_order_manager.cc)
+
+seastar_add_test (xtrader_ctp_field_utils
+  SOURCES xtrader_ctp_field_utils_test.cc)
+
+# B3 offline quote/bar matching, with no broker or trading entry.
+# Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_simulated_order_book
+  SOURCES
+    xtrader_simulated_order_book_test.cc
+    ../../src/xtrader/simulated_order_book.cc)
+
 # Phase 6 portable gate tests; no broker or reactor initialization.
 # Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
 seastar_add_test (xtrader_phase6_metrics
@@ -540,17 +723,47 @@ seastar_add_test (xtrader_historical_data_manager
     xtrader_historical_data_manager_test.cc
     ../../src/xtrader/historical_data_manager.cc)
 
+# B1: keep the runtime regression independent of CTP headers and libraries.
+# Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
 seastar_add_test (xtrader_runtime_sharded
   SOURCES
     xtrader_runtime_sharded_test.cc
     ../../src/xtrader/domain_types.cc
-    ../../src/xtrader/ctp_spi_adapter.cc
     ../../src/xtrader/runtime_engine.cc
     ../../src/xtrader/runtime_sharded.cc)
+
+# B1: exercise the gateway's fail-closed guard without connecting to a broker.
+# Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_ctp_gateway_safety
+  SOURCES
+    xtrader_ctp_gateway_safety_test.cc
+    ../../src/xtrader/domain_types.cc
+    ../../src/xtrader/ctp_gateway.cc
+    ../../src/xtrader/ctp_spi_adapter.cc
+    ../../src/xtrader/ctp_spi_bridge.cc
+    ../../src/xtrader/pending_order_manager.cc
+    ../../src/xtrader/performance_metrics.cc)
+target_include_directories (test_unit_xtrader_ctp_gateway_safety PRIVATE
+  ${Seastar_SOURCE_DIR}/api/ctp/v6.7.2/linux64)
+target_link_libraries (test_unit_xtrader_ctp_gateway_safety PRIVATE
+  ${Seastar_SOURCE_DIR}/api/ctp/v6.7.2/linux64/libthostmduserapi_se.so
+  ${Seastar_SOURCE_DIR}/api/ctp/v6.7.2/linux64/libthosttraderapi_se.so)
 
 seastar_add_test (xtrader_phase4_minimal
   SOURCES
     xtrader_phase4_minimal_test.cc
+    ../../src/xtrader/domain_types.cc
+    ../../src/xtrader/strategy_base.cc
+    ../../src/xtrader/strategy_lifecycle.cc
+    ../../src/xtrader/subscription_registry.cc
+    ../../src/xtrader/event_bus.cc
+    ../../src/xtrader/performance_metrics.cc
+    ../../src/xtrader/backtest_driver.cc
+    ../../src/xtrader/historical_data_manager.cc)
+
+seastar_add_test (xtrader_replay_input
+  SOURCES
+    xtrader_replay_input_test.cc
     ../../src/xtrader/domain_types.cc
     ../../src/xtrader/strategy_base.cc
     ../../src/xtrader/strategy_lifecycle.cc

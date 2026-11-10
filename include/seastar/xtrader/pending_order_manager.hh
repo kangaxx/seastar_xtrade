@@ -34,6 +34,7 @@ struct pending_order {
     domain::order_request request;
     std::string order_ref;           // Client-side order reference
     std::string order_sys_id;        // Exchange-assigned order ID (filled by OnRtnOrder)
+    std::string exchange_id;
     std::string broker_id;
     std::string investor_id;
     int front_id = 0;                 // Filled by OnRtnOrder
@@ -76,6 +77,7 @@ public:
     /// Update order with system ID (from OnRtnOrder)
     void set_order_sys_id(const std::string& order_ref, 
                           const std::string& order_sys_id,
+                          const std::string& exchange_id,
                           int front_id,
                           int session_id);
 

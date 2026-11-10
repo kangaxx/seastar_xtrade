@@ -56,7 +56,10 @@ std::vector<subscription_entry> subscription_registry::find_subscribers(
     }
     std::sort(result.begin(), result.end(),
         [](const subscription_entry& a, const subscription_entry& b) {
-            return a.priority > b.priority;
+            if (a.priority != b.priority) {
+                return a.priority > b.priority;
+            }
+            return a.strategy_id < b.strategy_id;
         });
     return result;
 }

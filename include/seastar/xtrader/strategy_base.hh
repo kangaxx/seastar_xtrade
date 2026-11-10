@@ -22,6 +22,7 @@
 #include <seastar/xtrader/domain_types.hh>
 
 #include <functional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -90,6 +91,9 @@ public:
     virtual future<> on_init(strategy_context& ctx) = 0;
     virtual future<> on_warmup(strategy_context& ctx) { return make_ready_future<>(); }
     virtual future<> on_market_data(strategy_context& ctx, const domain::market_data& md) = 0;
+    virtual future<> on_bar(strategy_context& ctx, const domain::bar_data& bar) {
+        return make_exception_future<>(std::runtime_error("strategy does not implement bar callbacks"));
+    }
     virtual future<> on_order_update(strategy_context& ctx, const domain::order& order) { return make_ready_future<>(); }
     virtual future<> on_trade_update(strategy_context& ctx, const domain::trade_report& trade) { return make_ready_future<>(); }
     virtual future<> on_timer(strategy_context& ctx) { return make_ready_future<>(); }

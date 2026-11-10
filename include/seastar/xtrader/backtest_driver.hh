@@ -18,20 +18,35 @@
 #pragma once
 
 #include <seastar/core/future.hh>
+#include <seastar/core/gate.hh>
 #include <seastar/core/sstring.hh>
 #include <seastar/core/timer.hh>
 #include <seastar/xtrader/domain_types.hh>
 #include <seastar/xtrader/event_bus.hh>
+#include <seastar/xtrader/offline_bar_timeline.hh>
 
 #include <chrono>
+#include <functional>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace seastar::xtrader {
 
+enum class backtest_data_mode {
+    historical,
+    embedded_demo,
+};
+
 struct backtest_config {
     sstring data_root = "/data/x_trader_data";
+    sstring dataset_exchange;
+    sstring dataset_timeframe;
+    backtest_data_mode data_mode = backtest_data_mode::historical;
+    // Inclusive calendar-date filters, not exchange trading days.
     sstring start_date;
     sstring end_date;
     sstring fee_model = "fixed";
@@ -59,6 +74,16 @@ struct backtest_stats {
     double max_drawdown = 0.0;
     sstring start_date;
     sstring end_date;
+};
+
+// B3: historical CSV time meaning and trading-day resolution are explicit.
+// Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
+struct backtest_bar_export_options {
+    std::optional<offline_bar_timestamp> timestamp_kind;
+    int64_t duration_nanos = 0;
+    sstring time_domain;
+    std::function<sstring(const sstring& exchange, const sstring& instrument,
+                          const sstring& calendar_date, const sstring& source_time)> resolve_trading_day;
 };
 
 struct backtest_order_record {
@@ -119,38 +144,63 @@ public:
 
     future<> load_data(const sstring& instrument_id);
     future<> run();
+    [[nodiscard]] std::vector<offline_bar_record>
+    export_offline_bars(const backtest_bar_export_options& options) const;
 
-    void set_event_bus(event_bus* bus) { _event_bus = bus; }
-    void set_execution_simulator(execution_simulator* sim) { _exec_sim = sim; }
+    void set_event_bus(event_bus* bus) {
+        if (_running) {
+            throw std::logic_error("cannot change the event bus during replay");
+        }
+        _event_bus = bus;
+    }
+    void set_execution_simulator(execution_simulator* sim) {
+        if (sim != nullptr) {
+            throw std::logic_error("execution simulation is not connected to replay");
+        }
+    }
 
     const backtest_stats& stats() const noexcept { return _stats; }
     const backtest_clock& clock() const noexcept { return _clock; }
 
 private:
-    struct tick_record {
-        int64_t timestamp_nanos;
+    struct replay_record {
+        market_event_type type = market_event_type::tick;
+        int64_t timestamp_nanos = 0;
+        sstring calendar_date;
         sstring trading_day;
         sstring time_str;
-        double last_price;
-        double open_price;
-        double high_price;
-        double low_price;
-        double close_price;
-        int volume;
-        double turnover;
-        double open_interest;
+        sstring exchange_id;
+        sstring timeframe;
+        double last_price = 0.0;
+        double open_price = 0.0;
+        double high_price = 0.0;
+        double low_price = 0.0;
+        double close_price = 0.0;
+        int volume = 0;
+        double turnover = 0.0;
+        double open_interest = 0.0;
     };
 
-    void replay_tick(const sstring& instrument_id, const tick_record& tick);
+    void load_historical_data(const sstring& instrument_id);
+    void load_demo_data(const sstring& instrument_id);
+    void store_loaded_data(const sstring& instrument_id, std::vector<replay_record> records);
+    future<> run_impl();
+    bool replay_event(const sstring& instrument_id, const replay_record& record);
 
     backtest_config _cfg;
     backtest_clock _clock;
     backtest_stats _stats;
     event_bus* _event_bus = nullptr;
-    execution_simulator* _exec_sim = nullptr;
 
-    std::unordered_map<sstring, std::vector<tick_record>> _tick_data;
+    std::unordered_map<sstring, std::vector<replay_record>> _replay_data;
+    std::unordered_set<sstring> _failed_instruments;
+    gate _operations;
+    size_t _pending_loads = 0;
     bool _started = false;
+    bool _stopping = false;
+    bool _running = false;
+    bool _replay_completed = false;
+    bool _replay_failed = false;
 };
 
 } // namespace seastar::xtrader

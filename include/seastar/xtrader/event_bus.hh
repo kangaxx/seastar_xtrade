@@ -17,7 +17,9 @@
  */
 #pragma once
 
+#include <seastar/core/condition-variable.hh>
 #include <seastar/core/future.hh>
+#include <seastar/core/gate.hh>
 #include <seastar/core/sstring.hh>
 #include <seastar/core/timer.hh>
 #include <seastar/xtrader/domain_types.hh>
@@ -26,6 +28,7 @@
 
 #include <memory>
 #include <chrono>
+#include <exception>
 #include <queue>
 #include <vector>
 #include <variant>
@@ -41,6 +44,9 @@ enum class market_event_type {
 struct market_event {
     market_event_type type = market_event_type::tick;
     sstring instrument_id;
+    sstring exchange_id;
+    sstring calendar_date;
+    sstring timeframe;
     sstring trading_day;
     sstring timestamp;
     double last_price = 0.0;
@@ -52,6 +58,7 @@ struct market_event {
     double turnover = 0.0;
     double open_interest = 0.0;
     domain::market_data raw_md;
+    bool require_subscriber = false;
 
     uint64_t sequence = 0;
     std::chrono::steady_clock::time_point queued_at{};
@@ -82,6 +89,7 @@ public:
 
     future<> start();
     future<> stop();
+    future<> drain();
 
     bool enqueue(const market_event& event);
 
@@ -89,9 +97,11 @@ public:
     void set_subscription_registry(subscription_registry* reg) { _sub_registry = reg; }
 
     const event_bus_metrics& metrics() const noexcept { return _metrics; }
+    bool is_started() const noexcept { return _started; }
 
 private:
-    void dispatch_batch();
+    void schedule_dispatch();
+    future<> dispatch_batch();
 
     event_bus_config _cfg;
     strategy_lifecycle_manager* _strategy_mgr = nullptr;
@@ -99,9 +109,18 @@ private:
 
     std::queue<market_event> _queue;
     timer<> _dispatch_timer;
+    // B1: retain dispatch work through shutdown and expose callback failures.
+    // Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
+    gate _dispatch_gate;
+    condition_variable _dispatch_done;
     event_bus_metrics _metrics;
     uint64_t _sequence_counter = 0;
+    std::exception_ptr _dispatch_error;
+    std::exception_ptr _callback_error;
     bool _started = false;
+    bool _dispatching = false;
+    bool _stopping = false;
+    bool _stopped = false;
 };
 
 } // namespace seastar::xtrader

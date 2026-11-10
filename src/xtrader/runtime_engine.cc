@@ -64,8 +64,11 @@ bool runtime_engine::init_account_service(double pre_balance) {
         return false;
     }
 
-    _account_service = std::make_unique<trading_account_service>();
-    _account_service->initialize(pre_balance);
+    auto service = std::make_unique<trading_account_service>();
+    if (!service->initialize(pre_balance)) {
+        return false;
+    }
+    _account_service = std::move(service);
 
     std::cout << "[INFO] runtime_engine::init_account_service: "
               << "initialized on account shard " << this_shard_id()
