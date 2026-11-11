@@ -13,6 +13,7 @@
 #include <seastar/xtrader/offline_bar_replay.hh>
 
 #include <seastar/core/coroutine.hh>
+#include <seastar/coroutine/maybe_yield.hh>
 
 #include <algorithm>
 #include <stdexcept>

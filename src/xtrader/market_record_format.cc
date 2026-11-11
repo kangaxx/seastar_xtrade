@@ -20,6 +20,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 namespace seastar::xtrader {
 namespace {
@@ -35,7 +36,7 @@ void require_token(const sstring& token) {
 }
 
 sstring csv_text(const sstring& text) {
-    sstring result = "\"";
+    std::string result = "\"";
     for (const char ch : text) {
         if (ch == '\r' || ch == '\n' || ch == '\0') {
             throw std::invalid_argument("multiline or NUL CSV field is not supported");
@@ -45,7 +46,8 @@ sstring csv_text(const sstring& text) {
         }
         result += ch;
     }
-    return result + "\"";
+    result += '"';
+    return sstring(result);
 }
 
 void require_number(double number, bool positive) {

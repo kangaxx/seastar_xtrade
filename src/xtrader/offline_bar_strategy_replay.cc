@@ -16,6 +16,7 @@
 
 #include <seastar/core/coroutine.hh>
 #include <seastar/core/future-util.hh>
+#include <seastar/coroutine/as_future.hh>
 
 #include <charconv>
 #include <cmath>

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Update date: 2026-11-10
-# Version: 2026.11.10.1
-# 在 LD/阿里云 Linux 服务器的仓库目录运行；本脚本不会连接远端或部署服务。
+# Update date: 2026-11-11
+# Version: 2026.11.11.1
+# 在 VBox 或 LD/阿里云 Linux 的仓库目录运行；不连接远端、不部署或自动同步源码。
 # Build current xtrader applications, including B5-B8 components, in Release mode.
 # Task source: user request
-# Requirement: update cloud Debug/Release builds; do not run regressions.
+# Requirement: support VBox/cloud builds and reject incomplete source copies before configuration.
 # Signature: GitHub Copilot (gpt-6-astra)
 set -Eeuo pipefail
 
@@ -14,6 +14,8 @@ cd "${ROOT_DIR}"
 JOBS="${JOBS:-1}"
 STALL_INTERVAL_SECONDS="${STALL_INTERVAL_SECONDS:-60}"
 RUN_HELP_CHECKS="${RUN_HELP_CHECKS:-0}"
+BOOST_ROOT="${BOOST_ROOT:-/usr/local}"
+CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:-/usr/local}"
 LOG_DIR="${ROOT_DIR}/build/logs"
 LOG_FILE="${LOG_DIR}/build_xtrader_demo_release_$(date '+%Y%m%d_%H%M%S').log"
 
@@ -94,12 +96,36 @@ run_step() {
 log "xtrader Release build started. JOBS=${JOBS}; stall notice interval=${STALL_INTERVAL_SECONDS}s"
 log "Full log: ${LOG_FILE}"
 log "Build only by default; RUN_HELP_CHECKS=${RUN_HELP_CHECKS}. No regressions or deployment."
+log "Dependency search: BOOST_ROOT=${BOOST_ROOT}; CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}"
 if [ -n "${CONDA_PREFIX:-}" ]; then
 	log "[WARN] Conda is active (${CONDA_PREFIX}); cached or runtime dependencies may come from it."
 fi
 
+missing_inputs=0
+for tool in python3 cmake ninja; do
+	if ! command -v "${tool}" >/dev/null 2>&1; then
+		log "[ERROR] Required build tool not found: ${tool}"
+		missing_inputs=1
+	fi
+done
+for file in configure.py apps/xtrader/CMakeLists.txt apps/xtrader/xtrader_entry_disabled.cc \
+		tools/xtrader_phase6_probe.cc tools/xtrader_acceptance.py tests/unit/xtrader_acceptance_test.py \
+		include/seastar/xtrader/market_data_pipeline.hh src/xtrader/market_data_pipeline.cc \
+		include/seastar/xtrader/market_record_format.hh src/xtrader/market_record_format.cc \
+		include/seastar/xtrader/paper_market_session.hh src/xtrader/paper_market_session.cc \
+		include/seastar/xtrader/recovery_coordinator.hh src/xtrader/recovery_coordinator.cc; do
+	if [[ ! -f "${file}" ]]; then
+		log "[ERROR] Required source file missing: ${file}"
+		missing_inputs=1
+	fi
+done
+if [[ "${missing_inputs}" != "0" ]]; then
+	log "[ERROR] Build not started. Prepare missing tools and synchronize the complete matching source tree, not just these scripts."
+	exit 2
+fi
+
 run_step "Configure Release build" \
-	env BOOST_ROOT=/usr/local CMAKE_PREFIX_PATH=/usr/local \
+	env BOOST_ROOT="${BOOST_ROOT}" CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}" \
 	python3 configure.py --mode=release --disable-dpdk
 
 run_step "Build xtrader applications, B5-B8 components and offline metrics probe" \

@@ -424,7 +424,7 @@ future<> ctp_gateway::login_md() {
             _md_login_promise.reset();
         }
         _md_login_request_id = 0;
-        return std::move(login_result);
+        return login_result;
     }
 
     return std::move(login_result).then([this] {
@@ -460,7 +460,7 @@ future<> ctp_gateway::login_td() {
             _td_authenticated_promise.reset();
         }
         _td_auth_request_id = 0;
-        return std::move(authentication_result);
+        return authentication_result;
     }
 
     return std::move(authentication_result).then([this] {
@@ -486,7 +486,7 @@ future<> ctp_gateway::login_td() {
                 _td_login_promise.reset();
             }
             _td_login_request_id = 0;
-            return std::move(login_result);
+            return login_result;
         }
 
         return std::move(login_result).then([this] {
@@ -704,7 +704,7 @@ future<domain::trading_account> ctp_gateway::sync_account_from_ctp() {
             _account_query_promise.reset();
         }
         _account_query_request_id = 0;
-        return std::move(query_result);
+        return query_result;
     }
 
     return std::move(query_result).then([](domain::trading_account account) {
