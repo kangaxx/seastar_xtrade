@@ -628,6 +628,7 @@ seastar_add_test (xtrader_offline_bar_strategy_replay
     ../../src/xtrader/event_bus.cc
     ../../src/xtrader/performance_metrics.cc
     ../../src/xtrader/backtest_driver.cc
+    ../../src/xtrader/market_data_paths.cc
     ../../src/xtrader/historical_data_manager.cc
     ../../src/xtrader/position_ledger.cc
     ../../src/xtrader/offline_fund_ledger.cc
@@ -727,6 +728,28 @@ seastar_add_test (xtrader_market_data_paths
     ../../src/xtrader/market_data_paths.cc)
 target_include_directories (test_unit_xtrader_market_data_paths PRIVATE ${Seastar_SOURCE_DIR}/include)
 
+# CLI menu uses isolated source directories, without initializing Seastar.
+# Source: user request, 2026-11-13. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_cli_data_sources
+  KIND CUSTOM
+  SOURCES
+    xtrader_cli_data_sources_test.cc
+    ../../src/xtrader/market_data_paths.cc)
+target_include_directories (test_unit_xtrader_cli_data_sources PRIVATE
+  ${Seastar_SOURCE_DIR}/include
+  ${Seastar_SOURCE_DIR}/apps/xtrader)
+
+# Backtest setup UI only; Run returns a construction marker, not trading results.
+# Source: user request, 2026-11-13. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_backtest_menu
+  KIND CUSTOM
+  SOURCES
+    xtrader_backtest_menu_test.cc
+    ../../src/xtrader/market_data_paths.cc)
+target_include_directories (test_unit_xtrader_backtest_menu PRIVATE
+  ${Seastar_SOURCE_DIR}/include
+  ${Seastar_SOURCE_DIR}/apps/xtrader)
+
 seastar_add_test (xtrader_historical_data_manager
   SOURCES
     xtrader_historical_data_manager_test.cc
@@ -768,6 +791,7 @@ seastar_add_test (xtrader_phase4_minimal
     ../../src/xtrader/event_bus.cc
     ../../src/xtrader/performance_metrics.cc
     ../../src/xtrader/backtest_driver.cc
+    ../../src/xtrader/market_data_paths.cc
     ../../src/xtrader/historical_data_manager.cc)
 
 seastar_add_test (xtrader_replay_input
@@ -780,6 +804,7 @@ seastar_add_test (xtrader_replay_input
     ../../src/xtrader/event_bus.cc
     ../../src/xtrader/performance_metrics.cc
     ../../src/xtrader/backtest_driver.cc
+    ../../src/xtrader/market_data_paths.cc
     ../../src/xtrader/historical_data_manager.cc)
 
 seastar_add_test (reactor_backend

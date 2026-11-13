@@ -45,7 +45,10 @@ public:
                                std::vector<std::string> additional_sources = {});
 
     [[nodiscard]] const std::filesystem::path& root() const noexcept;
-    [[nodiscard]] std::filesystem::path source_root(const std::string& source) const;
+    [[nodiscard]] std::filesystem::path source_root(
+        const std::string& source = "x_trader_data") const;
+    // Blocking discovery of immediate real directories; does not register new sources.
+    [[nodiscard]] std::vector<std::filesystem::path> source_directories() const;
     [[nodiscard]] std::filesystem::path dataset_directory(const market_data_key& key) const;
     [[nodiscard]] std::filesystem::path data_file(
         const market_data_key& key, const std::string& calendar_date,

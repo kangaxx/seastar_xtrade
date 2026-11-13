@@ -19,7 +19,8 @@
 ### 类别目录下的统一子目录设计
 
 统一路径类 `market_data_paths` 按以下布局生成及解析路径，不设独立“品种”目录。
-现有读取、录制及导入模块尚未改接此类，须后续逐项确认处理。
+CLI 数据浏览及回测菜单的默认根目录已改为由此类提供；读取器接口保持不变。
+录制、导入和真正回测执行仍须后续逐项确认处理。
 
 ```text
 /data/<source>/<asset_class>/<exchange>/<instrument>/<timeframe>/
@@ -87,7 +88,8 @@ Tick 与 bar 必须分目录；从 Tick 聚合出的分钟数据保留采集批�
 
 | 接口 | 用途 |
 |---|---|
-| `source_root(source)` | 返回登记的来源目录；四个来源内置，其他来源须构造时显式登记 |
+| `source_root(source)` | 返回登记的来源目录；省略参数时返回本系统采集目录 `x_trader_data` |
+| `source_directories()` | 读取根目录下实际存在的直接子目录并排序；不递归、不创建目录、不包括普通文件或符号链接 |
 | `dataset_directory(key)` | 返回来源/资产类别/交易所/合约或序列/周期目录 |
 | `data_file(key, calendar_date, format)` | 返回标准日文件路径；默认扩展名 `csv` |
 | `manifest_file(key)` | 返回该数据集描述文件路径 |
@@ -104,11 +106,60 @@ Tick 与 bar 必须分目录；从 Tick 聚合出的分钟数据保留采集批�
 它不消除检查与打开之间的竞态。后续文件后端仍需使用平台适合的受控打开/原子发布措施。
 本类不认证来源真实性、不批准实盘、不判断某个金融产品是否受当前策略/账务支持。
 
+### CLI 数据来源菜单
+
+CLI 启动时通过 `market_data_paths::source_root()` 取得默认采集目录，
+不在 CLI 内重新写死 `/data/x_trader_data`。主菜单显示当前来源及完整目录。
+
+1. 选择 `7) Select data source`，列出 `/data` 下实际存在的直接子目录名称及编号，
+   标记默认目录和当前选择；不是只显示四个预设名称。
+2. 输入编号切换，按 Enter 保持当前选择，输入 `u` 返回。输入无效编号会明确报错，
+   不接受手工路径跳转；目录无法列出时显示错误，保持原选择，不自动切换其他来源。
+3. 返回后选择 `4) Data Brief`，将所选目录作为构造参数传给 `historical_data_manager`；
+   `5) Config Info` 同时显示默认和当前目录。
+
+选择仅在当前 CLI 会话中生效，不写配置、不创建缺失目录、不迁移文件。
+默认采集目录缺失时也不会自动改选其他来源。来源目录的存在不证明数据质量或真实性。
+现有非标准名称目录也可以作为只读浏览根目录被选择；目录发现不会自动将它登记为
+标准日文件来源，`market_data_key` 的名称校验及显式注册规则保持不变。
+此处的来源选择仅影响 Data Brief，不自动覆盖回测子菜单的独立选择，
+也不改变导入菜单的源文件/目标目录或录制 sink 配置。
+
+### 回测菜单链（Run 返回“施工中”）
+
+主菜单新增 `8) Backtest setup (Run is under construction)`。这是准备参数和演示交互的入口，
+不是可执行交易回测的正式入口，独立 `xtrader_replay` 程序仍禁用。
+
+| 子菜单 | 行为 |
+|---|---|
+| `1) Select data source` | 复用来源选择菜单；进入回测菜单时独立默认本系统采集目录，不继承 Data Brief 的临时选择 |
+| `2) Select product type` | 按所选来源下的实际一级目录筛选；选中后纳入该目录下的数据文件，也可选全部 |
+| `3) Select data files` | 可不经过类型筛选直接选择一个或多个文件；输入如 `1,3` 或 `1 3`，按输入顺序保存选择 |
+| `4) Select strategy` | 当前仅提供 `Virtual` 占位项，不创建实际策略对象，不产生交易信号 |
+| `5) Run` | 检查已选择文件和策略，组装 `backtest_config` 后调用占位函数，固定返回“施工中” |
+
+产品类型筛选只按实际目录分组，不证明其金融产品类型；旧布局的 `dominant` 等目录也只是分组，
+不能据此认定数据是真实期货。来源/类型改变后，不混用旧文件选择：
+切换来源清空类型和文件；重新选择类型则用该分组的实际文件替换旧选择。
+取消选择保持原配置，缺目录、空数据或无效/重复编号明确提示，不自动填充示例文件。
+
+文件列表递归发现当前分组下的 `.csv`、`.jsonl`、`.parquet` 和 `.zip` 普通文件，
+排除符号链接、manifest 及 `.partial` 临时文件。这只是菜单候选类型，不表示执行器已经支持这些格式。
+Run 前再次检查所选来源和文件存在；选择仅保存在本次回测菜单会话内，不修改配置文件或数据。
+
+`backtest_config.data_root` 的默认值已改由路径类生成；菜单 Run 时显式写入所选 `data_root`、
+`data_files`、`product_type`、`strategy_id`。其中后三项是本轮新增的菜单准备参数，
+**现有 `backtest_driver` 还没有使用它们进行指定文件加载或策略执行**。
+Run 不创建驱动、不解码数据、不启动 event bus/撮合/账务、不生成收益报表，
+也不把“施工中”显示成回测成功；真正执行链路后续另行开发。
+导入器的独立 `import.conf` 和导入路径保持不变。
+
 ### 独立编译与用例（LD 上由用户执行）
 
-本轮本机编译器安装不完整，缺少 C++ 标准库头文件及 SDK，**编译和执行结果待用户回传**。
-脚本只编译 `market_data_paths.cc` 与它的独立用例，不依赖完整 Seastar 构建、
-CTP 或 Redis，不修改原有读写模块，不运行其余回归。
+用户已回传 2026-11-13 的首版路径类独立编译及用例通过日志；该结果不覆盖本轮新增的目录发现和 CLI 菜单。
+本机编译环境仍缺标准库头文件及 SDK，**本轮 C++ 编译和执行结果待 LD 回传**。
+脚本现在分别编译路径类、CLI 来源菜单及回测准备菜单用例，不依赖完整 Seastar 构建、
+CTP 或 Redis，不运行其余回归，不启动完整 CLI。
 
 在 LD 的仓库根目录运行：
 
@@ -127,14 +178,28 @@ CXX=clang++ bash scripts/test_xtrader_market_data_paths.sh
 文件格式名只验证命名，不执行 CSV/Parquet 解码。测试使用 `/tmp` 下独占的临时目录，
 不访问 `/data`；结束清理自身文件，失败返回非零退出码。
 成功应出现 `[OK] market_data_paths compilation and standalone cases passed.`。
+新增菜单用例覆盖默认来源、实际目录发现、四类及新来源选择、非法编号重试、取消/EOF、
+缺失/空目录以及文件/符号链接不参与选择，成功应出现
+`[OK] CLI data-source discovery and selection cases passed.`。
+回测菜单用例覆盖默认/其他来源、类型全选、单文件/多文件、Virtual 选择、
+无效输入、切换时清理旧选择、空/缺失数据及占位 Run 的参数传递，
+成功应出现 `[OK] Backtest source/product/files/strategy selection and placeholder Run passed.`。
 
-本轮只新增类、构建注册和专用脚本。`historical_data_manager`、`data_importer`、
-CLI、`backtest_driver`、`market_record_format` 和录制 sink 保持原调用方式；
-待用户逐项确认后分别处理，不能提前宣称所有数据已经由该类统一管理。
+完整 CLI 已在 CMake 中增加路径类实现的链接；菜单独立用例通过不等于完整 CLI 构建通过。
+已有 Release 构建配置时，可单独编译 CLI，不运行交易程序或回归：
+
+```bash
+cmake --build build/release --target app_xtrader_cli --parallel 1
+```
+
+`historical_data_manager`、`data_importer`、`backtest_driver.cc`、`market_record_format` 和录制 sink
+实现保持不变；本轮仅增加菜单配置字段、统一默认路径和 Run 占位接线，真正执行仍待逐项确认。
+引用 `backtest_config` 的相关应用及测试构建清单已补充路径类实现依赖，
+本轮未运行完整应用构建或原有回测回归。
 
 ### 当前兼容边界与实施顺序
 
-**路径管理类已新增；现有读写调用点未改接，没有迁移数据或改变当前业务读写行为。**
+**CLI 浏览与回测菜单默认根目录已改接路径管理类，没有迁移数据或修改读取器、导入器及录制行为。**
 当前导入器和历史读取器默认根目录仍为 `/data/x_trader_data`；
 淘宝导入的旧输出布局为 `<data_root>/<domain>/<exchange>/<symbol>/<timeframe>`，
 与上述设计不同。当前 `data_domain` 的 `raw`、`dominant`、`live_capture` 是旧分类，

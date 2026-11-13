@@ -106,6 +106,20 @@ std::filesystem::path market_data_paths::source_root(const std::string& source) 
     return _root / source;
 }
 
+// Discover selectable roots without treating ordinary files or links as sources.
+// Source: CLI source-selection request, 2026-11-13. Signature: GitHub Copilot (Auto).
+std::vector<std::filesystem::path> market_data_paths::source_directories() const {
+    std::vector<std::filesystem::path> directories;
+    for (const auto& entry : std::filesystem::directory_iterator(_root)) {
+        if (!std::filesystem::is_directory(entry.symlink_status())) {
+            continue;
+        }
+        directories.push_back(_root / entry.path().filename());
+    }
+    std::sort(directories.begin(), directories.end());
+    return directories;
+}
+
 std::filesystem::path market_data_paths::dataset_directory(const market_data_key& key) const {
     const auto source = source_root(key.source);
     validate_component(key.asset_class, "asset class");

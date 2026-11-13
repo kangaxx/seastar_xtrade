@@ -41,6 +41,7 @@ seastar_add_app(xtrader_demo SOURCES
     ../../src/xtrader/redis_metadata.cc
     ../../src/xtrader/web_api_handler.cc
     ../../src/xtrader/backtest_driver.cc
+    ../../src/xtrader/market_data_paths.cc
     # B3 offline matching is compiled but not connected to a trading entry.
     # Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
     ../../src/xtrader/simulated_order_book.cc
@@ -82,6 +83,7 @@ target_link_libraries(app_xtrader_demo PRIVATE
 
 seastar_add_app(xtrader_cli SOURCES
     xtrader_cli.cc
+    ../../src/xtrader/market_data_paths.cc
     ../../src/xtrader/data_importer.cc
     ../../src/xtrader/historical_data_manager.cc
     ../../src/xtrader/redis_sync_client.cc)

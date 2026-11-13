@@ -3,10 +3,14 @@
  */
 #include <seastar/core/app-template.hh>
 #include <seastar/core/thread.hh>
+#include <seastar/xtrader/backtest_driver.hh>
 #include <seastar/xtrader/data_importer.hh>
 #include <seastar/xtrader/historical_data_manager.hh>
 #include <seastar/xtrader/redis_sync_client.hh>
 #include <seastar/xtrader/version.hh>
+
+#include "data_source_menu.hh"
+#include "backtest_menu.hh"
 
 #include <algorithm>
 #include <cctype>
@@ -142,7 +146,8 @@ void print_env_summary(const std::filesystem::path& env_dir, size_t index) {
 // ============================================================
 // show_config_info（重构版）
 // ============================================================
-void show_config_info() {
+void show_config_info(const seastar::xtrader::market_data_paths& paths,
+                      const std::filesystem::path& selected_data_root) {
     std::cout << "\n========== Configuration Info ==========" << std::endl;
     std::cout << "Version:    " << seastar::xtrader::version << std::endl;
     std::cout << "Build:      " << seastar::xtrader::build_type << std::endl;
@@ -171,7 +176,8 @@ void show_config_info() {
 
     // 数据目录
     std::cout << "\n--- Data Directories ---" << std::endl;
-    std::cout << "Default Data Root: /data/x_trader_data" << std::endl;
+    std::cout << "Default Data Root: " << paths.source_root().string() << std::endl;
+    std::cout << "Selected Data Root: " << selected_data_root.string() << std::endl;
     std::cout << "========================================" << std::endl;
 }
 
@@ -200,8 +206,30 @@ void run_heartbeat_test() {
     redis.disconnect();
 }
 
+// Run receives the configured selection but deliberately does not start a driver.
+// Source: user request, 2026-11-13. Signature: GitHub Copilot (Auto).
+std::string run_backtest(const seastar::xtrader::backtest_config&) {
+    return seastar::xtrader::cli::backtest_placeholder_result();
+}
+
+void open_backtest_menu(const seastar::xtrader::market_data_paths& paths) {
+    seastar::xtrader::cli::run_backtest_menu(
+        paths, std::cin, std::cout, std::cerr,
+        [] (const seastar::xtrader::cli::backtest_selection& selection) {
+            seastar::xtrader::backtest_config config;
+            config.data_root = selection.data_root.string();
+            config.data_files = selection.data_files;
+            config.product_type = selection.product_directory.filename().string();
+            config.strategy_id = selection.strategy_id;
+            return run_backtest(config);
+        });
+}
+
 void run_root_menu() {
-    std::string data_root = "/data/x_trader_data";
+    // Source selection changes browsing only, not import destinations or trading modes.
+    // Source: user request, 2026-11-13. Signature: GitHub Copilot (Auto).
+    const seastar::xtrader::market_data_paths data_paths;
+    auto data_root = data_paths.source_root();
     std::string import_source_path;
     seastar::xtrader::import_source_type import_source_type = seastar::xtrader::import_source_type::taobao_csv;
     seastar::xtrader::import_mode import_mode = seastar::xtrader::import_mode::incremental;
@@ -212,16 +240,22 @@ void run_root_menu() {
         // B1: the general-purpose CLI cannot select a trading environment.
         // Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
         std::cout << "Trading modes are unavailable in this CLI; separate entries are disabled." << std::endl;
+        std::cout << "Data source: " << data_root.filename().string() << std::endl;
+        std::cout << "Data root: " << data_root.string() << std::endl;
         std::cout << "3) Import" << std::endl;
         std::cout << "4) Data Brief" << std::endl;
         std::cout << "5) Config Info" << std::endl;
         std::cout << "6) Heartbeat Test" << std::endl;
+        std::cout << "7) Select data source" << std::endl;
+        std::cout << "8) Backtest setup (Run is under construction)" << std::endl;
         std::cout << "q) Quit" << std::endl;
         std::cout << "==================================" << std::endl;
         std::cout << "Select: ";
 
         std::string input;
-        std::getline(std::cin, input);
+        if (!std::getline(std::cin, input)) {
+            return;
+        }
         input = to_lower(input);
 
         if (input == "1" || input == "2") {
@@ -323,6 +357,7 @@ void run_root_menu() {
         } else if (input == "4") {
             // Data brief
             std::cout << "\n[Data Brief]" << std::endl;
+            std::cout << "Data root: " << data_root.string() << std::endl;
             seastar::xtrader::historical_data_manager manager(data_root);
             std::string warning;
             auto datasets = manager.scan_datasets(&warning);
@@ -336,9 +371,14 @@ void run_root_menu() {
                           << " (" << ds.row_count << " records)" << std::endl;
             }
         } else if (input == "5") {
-            show_config_info();
+            show_config_info(data_paths, data_root);
         } else if (input == "6") {
             run_heartbeat_test();
+        } else if (input == "7") {
+            seastar::xtrader::cli::select_data_source(
+                data_paths, data_root, std::cin, std::cout, std::cerr);
+        } else if (input == "8") {
+            open_backtest_menu(data_paths);
         } else if (input == "q" || input == "quit" || input == "exit") {
             std::cout << "Goodbye!" << std::endl;
             break;

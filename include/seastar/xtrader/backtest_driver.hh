@@ -23,6 +23,7 @@
 #include <seastar/core/timer.hh>
 #include <seastar/xtrader/domain_types.hh>
 #include <seastar/xtrader/event_bus.hh>
+#include <seastar/xtrader/market_data_paths.hh>
 #include <seastar/xtrader/offline_bar_timeline.hh>
 
 #include <chrono>
@@ -42,7 +43,12 @@ enum class backtest_data_mode {
 };
 
 struct backtest_config {
-    sstring data_root = "/data/x_trader_data";
+    // Menu setup only; explicit files and strategy are not wired into execution yet.
+    // Source: user request, 2026-11-13. Signature: GitHub Copilot (Auto).
+    sstring data_root{market_data_paths{}.source_root().string()};
+    std::vector<std::filesystem::path> data_files;
+    sstring product_type;
+    sstring strategy_id;
     sstring dataset_exchange;
     sstring dataset_timeframe;
     backtest_data_mode data_mode = backtest_data_mode::historical;
