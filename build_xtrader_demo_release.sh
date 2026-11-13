@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Update date: 2026-11-11
-# Version: 2026.11.11.1
+# Update date: 2026-11-13
+# Version: 2026.11.13.1
 # 在 VBox 或 LD/阿里云 Linux 的仓库目录运行；不连接远端、不部署或自动同步源码。
 # Build current xtrader applications, including B5-B8 components, in Release mode.
 # Task source: user request
@@ -113,7 +113,13 @@ for file in configure.py apps/xtrader/CMakeLists.txt apps/xtrader/xtrader_entry_
 		include/seastar/xtrader/market_data_pipeline.hh src/xtrader/market_data_pipeline.cc \
 		include/seastar/xtrader/market_record_format.hh src/xtrader/market_record_format.cc \
 		include/seastar/xtrader/paper_market_session.hh src/xtrader/paper_market_session.cc \
-		include/seastar/xtrader/recovery_coordinator.hh src/xtrader/recovery_coordinator.cc; do
+		include/seastar/xtrader/recovery_coordinator.hh src/xtrader/recovery_coordinator.cc \
+		apps/xtrader/xtrader_market_capture.cc apps/xtrader/xtrader_market_config.cc \
+		apps/xtrader/market_capture_launcher.cc apps/xtrader/market_capture_menu.hh \
+		include/seastar/xtrader/market_capture.hh include/seastar/xtrader/market_capture_config.hh \
+		src/xtrader/market_capture.cc src/xtrader/market_capture_config.cc \
+		src/xtrader/market_tick_writer.cc src/xtrader/market_tick_writer.hh src/xtrader/market_capture_io.hh \
+		api/ctp/v6.7.2/linux64/ThostFtdcMdApi.h api/ctp/v6.7.2/linux64/libthostmduserapi_se.so; do
 	if [[ ! -f "${file}" ]]; then
 		log "[ERROR] Required source file missing: ${file}"
 		missing_inputs=1
@@ -131,14 +137,14 @@ run_step "Configure Release build" \
 run_step "Build xtrader applications, B5-B8 components and offline metrics probe" \
 	ninja -C build/release -j"${JOBS}" app_xtrader_cli app_xtrader_demo \
 		app_xtrader_replay app_xtrader_paper app_xtrader_ctp_sim app_xtrader_live \
-		app_xtrader_phase6_probe
+		app_xtrader_phase6_probe app_xtrader_market_capture app_xtrader_market_config
 
 run_step "Check acceptance tool Python syntax (no execution or bytecode files)" \
 	python3 -c 'import pathlib; import sys; [compile(pathlib.Path(p).read_text(encoding="utf-8-sig"), p, "exec") for p in sys.argv[1:]]; print("Python syntax OK; no acceptance checks or tests executed")' \
 		tools/xtrader_acceptance.py tests/unit/xtrader_acceptance_test.py
 
 if [[ "${RUN_HELP_CHECKS}" == "1" ]]; then
-	for entry in cli demo replay paper ctp_sim live; do
+	for entry in cli demo replay paper ctp_sim live market_capture market_config; do
 		run_step "Check xtrader ${entry} help only" \
 			"${ROOT_DIR}/build/release/apps/xtrader/xtrader_${entry}" --help
 	done
@@ -148,4 +154,5 @@ fi
 
 log "[OK] xtrader Release build and Python syntax check completed; regressions were not run."
 log "Artifacts: build/release/apps/xtrader/xtrader_{cli,demo,replay,paper,ctp_sim,live,phase6_probe}"
+log "Read-only market tools: build/release/apps/xtrader/xtrader_{market_capture,market_config}; not started."
 log "[WARN] Trading entry backends are not operational; --help is not a trading verification."

@@ -83,6 +83,7 @@ target_link_libraries(app_xtrader_demo PRIVATE
 
 seastar_add_app(xtrader_cli SOURCES
     xtrader_cli.cc
+    market_capture_launcher.cc
     ../../src/xtrader/market_data_paths.cc
     ../../src/xtrader/data_importer.cc
     ../../src/xtrader/historical_data_manager.cc
@@ -93,6 +94,48 @@ target_include_directories(app_xtrader_cli PRIVATE
     ${CMAKE_SOURCE_DIR}/include)
 
 target_link_libraries(app_xtrader_cli PRIVATE hiredis)
+
+# Read-only collector runs outside the reactor and links MdApi only.
+# Source: user request, 2026-11-13. Signature: GitHub Copilot (Auto).
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+add_library(xtrader_market_capture_core STATIC
+    ../../src/xtrader/market_capture_config.cc
+    ../../src/xtrader/market_capture.cc
+    ../../src/xtrader/market_tick_writer.cc
+    ../../src/xtrader/market_data_paths.cc)
+target_include_directories(xtrader_market_capture_core PUBLIC ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(xtrader_market_capture_core SYSTEM PRIVATE ${CTP_API_DIR})
+target_link_libraries(xtrader_market_capture_core PUBLIC OpenSSL::Crypto Threads::Threads)
+
+add_executable(app_xtrader_market_capture xtrader_market_capture.cc)
+target_include_directories(app_xtrader_market_capture SYSTEM PRIVATE ${CTP_API_DIR})
+target_link_libraries(app_xtrader_market_capture PRIVATE
+    xtrader_market_capture_core "${CTP_API_DIR}/libthostmduserapi_se.so")
+set_target_properties(app_xtrader_market_capture PROPERTIES
+    OUTPUT_NAME xtrader_market_capture BUILD_RPATH "${CTP_API_DIR}")
+
+add_executable(app_xtrader_market_config xtrader_market_config.cc)
+target_link_libraries(app_xtrader_market_config PRIVATE xtrader_market_capture_core)
+set_target_properties(app_xtrader_market_config PROPERTIES OUTPUT_NAME xtrader_market_config)
+add_dependencies(app_xtrader_cli app_xtrader_market_capture app_xtrader_market_config)
+add_dependencies(apps app_xtrader_market_capture app_xtrader_market_config)
+
+if(Seastar_TESTING)
+    add_executable(test_unit_xtrader_market_capture EXCLUDE_FROM_ALL
+        ../../tests/unit/xtrader_market_capture_test.cc)
+    target_include_directories(test_unit_xtrader_market_capture PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src/xtrader)
+    target_include_directories(test_unit_xtrader_market_capture SYSTEM PRIVATE ${CTP_API_DIR})
+    target_link_libraries(test_unit_xtrader_market_capture PRIVATE xtrader_market_capture_core)
+    add_dependencies(unit_tests test_unit_xtrader_market_capture)
+    add_custom_target(test_unit_xtrader_market_capture_run
+        COMMAND $<TARGET_FILE:test_unit_xtrader_market_capture>
+        DEPENDS test_unit_xtrader_market_capture USES_TERMINAL VERBATIM)
+    add_test(NAME Seastar.unit.xtrader_market_capture
+        COMMAND ${CMAKE_COMMAND} --build ${Seastar_BINARY_DIR}
+            --target test_unit_xtrader_market_capture_run)
+    set_tests_properties(Seastar.unit.xtrader_market_capture PROPERTIES TIMEOUT ${Seastar_TEST_TIMEOUT})
+endif()
 
 # B1: separate fail-closed entry binaries; no CTP libraries are linked here.
 # Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).

@@ -11,6 +11,7 @@
 
 #include "data_source_menu.hh"
 #include "backtest_menu.hh"
+#include "market_capture_menu.hh"
 
 #include <algorithm>
 #include <cctype>
@@ -248,6 +249,7 @@ void run_root_menu() {
         std::cout << "6) Heartbeat Test" << std::endl;
         std::cout << "7) Select data source" << std::endl;
         std::cout << "8) Backtest setup (Run is under construction)" << std::endl;
+        std::cout << "9) Read-only CTP market capture" << std::endl;
         std::cout << "q) Quit" << std::endl;
         std::cout << "==================================" << std::endl;
         std::cout << "Select: ";
@@ -379,6 +381,8 @@ void run_root_menu() {
                 data_paths, data_root, std::cin, std::cout, std::cerr);
         } else if (input == "8") {
             open_backtest_menu(data_paths);
+        } else if (input == "9") {
+            seastar::xtrader::cli::open_market_capture_menu();
         } else if (input == "q" || input == "quit" || input == "exit") {
             std::cout << "Goodbye!" << std::endl;
             break;
