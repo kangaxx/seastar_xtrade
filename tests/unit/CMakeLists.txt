@@ -718,6 +718,15 @@ seastar_add_test (xtrader_phase6_metrics
   LIBRARIES Threads::Threads)
 target_include_directories(test_unit_xtrader_phase6_metrics PRIVATE ${Seastar_SOURCE_DIR}/include)
 
+# Shared path rules only; existing readers and writers are migrated separately.
+# Source: user request, 2026-11-13. Signature: GitHub Copilot (Auto).
+seastar_add_test (xtrader_market_data_paths
+  KIND CUSTOM
+  SOURCES
+    xtrader_market_data_paths_test.cc
+    ../../src/xtrader/market_data_paths.cc)
+target_include_directories (test_unit_xtrader_market_data_paths PRIVATE ${Seastar_SOURCE_DIR}/include)
+
 seastar_add_test (xtrader_historical_data_manager
   SOURCES
     xtrader_historical_data_manager_test.cc
