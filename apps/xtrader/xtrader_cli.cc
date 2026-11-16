@@ -22,6 +22,7 @@
 #include <iostream>
 #include <string>
 #include <system_error>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -236,6 +237,10 @@ void run_root_menu() {
     seastar::xtrader::import_mode import_mode = seastar::xtrader::import_mode::incremental;
     std::string import_config_path;
 
+    if (::isatty(STDIN_FILENO)) {
+        seastar::xtrader::cli::open_market_config_selection();
+    }
+
     while (true) {
         std::cout << "\n========== X-Trader CLI ==========" << std::endl;
         // B1: the general-purpose CLI cannot select a trading environment.
@@ -250,6 +255,9 @@ void run_root_menu() {
         std::cout << "7) Select data source" << std::endl;
         std::cout << "8) Backtest setup (Run is under construction)" << std::endl;
         std::cout << "9) Read-only CTP market capture" << std::endl;
+        std::cout << "10) Initial CTP key" << std::endl;
+        std::cout << "11) Select encrypted market configuration" << std::endl;
+        std::cout << "12) Import legacy X-Trader INI" << std::endl;
         std::cout << "q) Quit" << std::endl;
         std::cout << "==================================" << std::endl;
         std::cout << "Select: ";
@@ -383,6 +391,12 @@ void run_root_menu() {
             open_backtest_menu(data_paths);
         } else if (input == "9") {
             seastar::xtrader::cli::open_market_capture_menu();
+        } else if (input == "10") {
+            seastar::xtrader::cli::open_initial_ctp_key_menu();
+        } else if (input == "11") {
+            seastar::xtrader::cli::open_market_config_selection();
+        } else if (input == "12") {
+            seastar::xtrader::cli::open_legacy_import_menu();
         } else if (input == "q" || input == "quit" || input == "exit") {
             std::cout << "Goodbye!" << std::endl;
             break;

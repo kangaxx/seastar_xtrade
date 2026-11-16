@@ -1,4 +1,4 @@
-// AES-256-GCM envelope; deliberately rejects legacy XOR/plaintext configurations.
+// AES-256-GCM envelope; legacy XOR is supported only by explicit import.
 // Source: user request, 2026-11-13. Signature: GitHub Copilot (Auto).
 #include <seastar/xtrader/market_capture_config.hh>
 #include <seastar/xtrader/market_data_paths.hh>
@@ -11,11 +11,13 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cctype>
 #include <map>
 #include <memory>
 #include <set>
 #include <sstream>
 #include <string_view>
+#include <utility>
 
 namespace seastar::xtrader {
 namespace {
@@ -45,6 +47,10 @@ void require_text(const std::string& text, std::size_t maximum, const char* fiel
     }
 }
 
+void require_optional_text(const std::string& text, std::size_t maximum, const char* field) {
+    if (!text.empty()) { require_text(text, maximum, field, true); }
+}
+
 secret_text read_key(const std::filesystem::path& path) {
     secret_text key{capture_detail::read_private_file(path, 32)};
     if (key.value.size() != 32) {
@@ -60,7 +66,15 @@ std::string serialize(const market_capture_config& config) {
         text += contract.exchange + ":" + contract.instrument + ",";
     }
     text.pop_back();
-    return text + "\n";
+    text += "\n";
+    if (config.trader) {
+        const auto& trader = *config.trader;
+        text += "trade_front=" + trader.trade_front + "\ntrader_broker_id=" + trader.broker_id
+            + "\ntrader_user_id=" + trader.user_id + "\ntrader_password=" + trader.password
+            + "\ntrader_app_id=" + trader.app_id + "\ntrader_auth_code=" + trader.auth_code
+            + "\ntrader_user_product_info=" + trader.user_product_info + "\n";
+    }
+    return text;
 }
 
 market_capture_config parse(const std::string& text) {
@@ -76,9 +90,9 @@ market_capture_config parse(const std::string& text) {
         }
         remaining = newline == std::string_view::npos ? std::string_view{} : remaining.substr(newline + 1);
     }
-    if (fields.size() != 5 || !fields.contains("broker_id") || !fields.contains("user_id")
+    if ((fields.size() != 5 && fields.size() != 12) || !fields.contains("broker_id") || !fields.contains("user_id")
             || !fields.contains("password") || !fields.contains("market_front") || !fields.contains("contracts")) {
-        throw std::invalid_argument("encrypted market configuration requires exactly five supported fields");
+        throw std::invalid_argument("encrypted market configuration has missing or unsupported fields");
     }
     market_capture_config config;
     config.broker_id = fields.at("broker_id");
@@ -86,6 +100,22 @@ market_capture_config parse(const std::string& text) {
     config.password = fields.at("password");
     config.market_front = fields.at("market_front");
     config.contracts = parse_market_capture_contracts(std::string(fields.at("contracts")));
+    if (fields.size() == 12) {
+        for (const auto* name : {"trade_front", "trader_broker_id", "trader_user_id", "trader_password",
+                                 "trader_app_id", "trader_auth_code", "trader_user_product_info"}) {
+            if (!fields.contains(name)) {
+                throw std::invalid_argument("encrypted configuration has incomplete trader fields");
+            }
+        }
+        config.trader.emplace();
+        config.trader->trade_front = fields.at("trade_front");
+        config.trader->broker_id = fields.at("trader_broker_id");
+        config.trader->user_id = fields.at("trader_user_id");
+        config.trader->password = fields.at("trader_password");
+        config.trader->app_id = fields.at("trader_app_id");
+        config.trader->auth_code = fields.at("trader_auth_code");
+        config.trader->user_product_info = fields.at("trader_user_product_info");
+    }
     validate_market_capture_config(config);
     return config;
 }
@@ -104,6 +134,97 @@ market_capture_config::~market_capture_config() {
     for (auto* text : {&broker_id, &user_id, &password}) {
         OPENSSL_cleanse(text->data(), text->size());
     }
+}
+
+legacy_trader_config::~legacy_trader_config() {
+    for (auto* text : {&broker_id, &user_id, &password, &app_id, &auth_code, &user_product_info}) {
+        OPENSSL_cleanse(text->data(), text->size());
+    }
+}
+
+market_capture_config import_legacy_market_config(const std::filesystem::path& ini_file,
+                                                  const std::string& secret,
+                                                  std::vector<market_capture_contract> contracts) {
+    if (secret.empty()) { throw std::invalid_argument("legacy INI secret is empty"); }
+    secret_text contents{capture_detail::read_private_file(ini_file, MAX_CONFIG_SIZE)};
+    std::map<std::string, std::string_view> fields;
+    std::string section;
+    std::string_view remaining(contents.value);
+    if (remaining.starts_with("\xef\xbb\xbf")) { remaining.remove_prefix(3); }
+    auto trim = [] (std::string_view text) {
+        const auto first = text.find_first_not_of(" \t\r");
+        if (first == std::string_view::npos) { return std::string_view{}; }
+        return text.substr(first, text.find_last_not_of(" \t\r") - first + 1);
+    };
+    auto lower = [] (std::string_view text) {
+        std::string result(text);
+        std::transform(result.begin(), result.end(), result.begin(),
+            [] (unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        return result;
+    };
+    while (!remaining.empty()) {
+        const auto newline = remaining.find('\n');
+        auto line = trim(remaining.substr(0, newline));
+        remaining = newline == std::string_view::npos ? std::string_view{} : remaining.substr(newline + 1);
+        if (line.empty() || line.front() == ';' || line.front() == '#') { continue; }
+        if (line.front() == '[' && line.back() == ']') {
+            section = lower(trim(line.substr(1, line.size() - 2)));
+            continue;
+        }
+        const auto separator = line.find_first_of("=:");
+        if (separator == std::string_view::npos || section.empty()) {
+            throw std::invalid_argument("invalid legacy INI syntax");
+        }
+        auto value = trim(line.substr(separator + 1));
+        for (std::size_t i = 1; i < value.size(); ++i) {
+            if (value[i] == ';' && (value[i - 1] == ' ' || value[i - 1] == '\t')) {
+                value = trim(value.substr(0, i));
+                break;
+            }
+        }
+        const auto name = section + "." + lower(trim(line.substr(0, separator)));
+        if (!fields.emplace(name, value).second) {
+            throw std::invalid_argument("duplicate legacy INI field");
+        }
+    }
+    auto field = [&] (const char* name) -> std::string_view {
+        const auto it = fields.find(name);
+        if (it == fields.end()) { throw std::invalid_argument(std::string("missing legacy INI field: ") + name); }
+        return it->second;
+    };
+    auto decrypt = [&] (const char* name) {
+        const auto hex = field(name);
+        if (hex.size() % 2 != 0) { throw std::invalid_argument(std::string("invalid legacy hex field: ") + name); }
+        auto nibble = [name] (char c) -> unsigned char {
+            if (c >= '0' && c <= '9') { return static_cast<unsigned char>(c - '0'); }
+            if (c >= 'a' && c <= 'f') { return static_cast<unsigned char>(c - 'a' + 10); }
+            if (c >= 'A' && c <= 'F') { return static_cast<unsigned char>(c - 'A' + 10); }
+            throw std::invalid_argument(std::string("invalid legacy hex field: ") + name);
+        };
+        secret_text result;
+        result.value.reserve(hex.size() / 2);
+        for (std::size_t i = 0; i < hex.size(); i += 2) {
+            const auto byte = static_cast<unsigned char>((nibble(hex[i]) << 4) | nibble(hex[i + 1]));
+            result.value.push_back(static_cast<char>(byte ^ static_cast<unsigned char>(secret[(i / 2) % secret.size()]) ^ 0x5a));
+        }
+        return std::move(result.value);
+    };
+    market_capture_config config;
+    config.market_front = field("market.market_front");
+    config.broker_id = decrypt("market.broker_id");
+    config.user_id = decrypt("market.user_id");
+    config.password = decrypt("market.password");
+    config.contracts = std::move(contracts);
+    config.trader.emplace();
+    config.trader->trade_front = field("trader.trade_front");
+    config.trader->broker_id = decrypt("trader.broker_id");
+    config.trader->user_id = decrypt("trader.user_id");
+    config.trader->password = decrypt("trader.password");
+    config.trader->app_id = decrypt("trader.app_id");
+    config.trader->auth_code = decrypt("trader.auth_code");
+    config.trader->user_product_info = decrypt("trader.user_product_info");
+    validate_market_capture_config(config);
+    return config;
 }
 
 std::vector<market_capture_contract> parse_market_capture_contracts(const std::string& text) {
@@ -158,12 +279,55 @@ void validate_market_capture_config(const market_capture_config& config) {
         }
         (void)paths.dataset_directory({"x_trader_data", "futures", contract.exchange, contract.instrument, "tick"});
     }
+    if (config.trader) {
+        const auto& trader = *config.trader;
+        require_text(trader.trade_front, 255, "trade_front");
+        require_text(trader.broker_id, 10, "trader_broker_id");
+        require_text(trader.user_id, 15, "trader_user_id");
+        require_optional_text(trader.password, 40, "trader_password");
+        require_optional_text(trader.app_id, 128, "trader_app_id");
+        require_optional_text(trader.auth_code, 128, "trader_auth_code");
+        require_optional_text(trader.user_product_info, 128, "trader_user_product_info");
+    }
 }
 
 void create_market_capture_key(const std::filesystem::path& path) {
     secret_text key{std::string(32, '\0')};
     require_crypto(RAND_bytes(reinterpret_cast<unsigned char*>(key.value.data()), 32) == 1);
     capture_detail::create_private_file(path, key.value);
+}
+
+// Menu initialization never overwrites an existing configuration or rotates a key.
+// Source: Initial CTP key request, 2026-11-13. Signature: GitHub Copilot (Auto).
+void initialize_market_capture_config(const market_capture_config& config,
+                                     const std::filesystem::path& encrypted_file,
+                                     const std::filesystem::path& key_file) {
+    validate_market_capture_config(config);
+    const auto output = std::filesystem::absolute(encrypted_file).lexically_normal();
+    const auto key = std::filesystem::absolute(key_file).lexically_normal();
+    if (output.extension() != ".enc" || output == key) {
+        throw std::invalid_argument("use a .enc configuration and a separate key file outside Git");
+    }
+    const auto status = [] (const std::filesystem::path& path) {
+        std::error_code error;
+        const auto result = std::filesystem::symlink_status(path, error);
+        if (error && error != std::errc::no_such_file_or_directory) {
+            throw std::filesystem::filesystem_error("inspect initialization target", path, error);
+        }
+        return result.type();
+    };
+    if (status(output) != std::filesystem::file_type::not_found) {
+        throw std::runtime_error("encrypted configuration already exists; choose a new .enc filename");
+    }
+    const bool has_key = status(key) != std::filesystem::file_type::not_found;
+    if (has_key) { (void)read_key(key); }
+    for (const auto& directory : {output.parent_path(), key.parent_path()}) {
+        if (std::filesystem::create_directories(directory)) {
+            std::filesystem::permissions(directory, std::filesystem::perms::owner_all);
+        }
+    }
+    if (!has_key) { create_market_capture_key(key); }
+    save_market_capture_config(config, output, key);
 }
 
 void save_market_capture_config(const market_capture_config& config,

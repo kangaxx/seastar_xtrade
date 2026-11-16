@@ -78,6 +78,7 @@ public:
           _state_directory(std::move(state_directory)), _factory(std::move(factory)),
           _writer(_paths, _config.contracts) {
         validate_market_capture_config(_config);
+        _config.trader.reset();
         if (!_factory) { throw std::invalid_argument("market API factory is required"); }
     }
 

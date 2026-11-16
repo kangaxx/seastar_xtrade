@@ -181,6 +181,171 @@ void test_authenticated_config(const fs::path& root) {
     require_failure([&] { (void)parse_market_capture_contracts("SHFE:rb2701,"); }, "empty contract rejected");
 }
 
+void test_configuration_initialization(const fs::path& root) {
+    const auto key = root / "keys" / "market.key";
+    const auto encrypted = root / "config" / "market.enc";
+    initialize_market_capture_config(config(), encrypted, key);
+    const auto original_key = read(key);
+    const auto original_config = read(encrypted);
+    require(load_market_capture_config(encrypted, key).password == "test-only",
+        "initialization generates a usable key and authenticated config");
+    require_failure([&] { initialize_market_capture_config(config(), encrypted, key); },
+        "initialization never overwrites an existing encrypted configuration");
+    require(read(key) == original_key && read(encrypted) == original_config,
+        "failed repeat initialization preserves both existing files");
+    const auto second = root / "config" / "second.enc";
+    initialize_market_capture_config(config(), second, key);
+    require(read(key) == original_key && load_market_capture_config(second, key).user_id == "offline-user",
+        "new config can securely reuse an existing key without rotation");
+    const auto unused_key = root / "keys" / "unused.key";
+    require_failure([&] { initialize_market_capture_config(config(), root / "wrong.ini", unused_key); },
+        "initialization requires an enc filename");
+    require(!fs::exists(unused_key), "invalid config path does not generate an orphan key");
+    require_failure([&] { initialize_market_capture_config(config(), root / "same.enc", root / "same.enc"); },
+        "key and encrypted config cannot share a path");
+    replace(root / "bad.key", "invalid");
+    require_failure([&] { initialize_market_capture_config(config(), root / "bad.enc", root / "bad.key"); },
+        "existing invalid key is rejected rather than replaced");
+    require(read(root / "bad.key") == "invalid" && !fs::exists(root / "bad.enc"),
+        "invalid key and absent configuration are preserved on failure");
+}
+
+std::string legacy_hex(const std::string& value, const std::string& key) {
+    const char* digits = "0123456789ABCDEF";
+    std::string result;
+    for (std::size_t i = 0; i < value.size(); ++i) {
+        const auto byte = static_cast<unsigned char>(value[i] ^ key[i % key.size()] ^ 0x5a);
+        result += digits[byte >> 4];
+        result += digits[byte & 15];
+    }
+    return result;
+}
+
+void test_legacy_import(const fs::path& root) {
+    fs::create_directories(root);
+    const std::string secret = "fixture-secret";
+    const auto encoded = [&] (const char* text) { return legacy_hex(text, secret); };
+    const auto ini = root / "legacy.ini";
+    const auto text = std::string("\xef\xbb\xbf[market]\r\nmarket_front=tcp://127.0.0.1:1\r\n")
+        + "broker_id=5355444246465A\r\nuser_id=" + encoded("offline-user")
+        + "\r\npassword=" + encoded("test-only") + "\r\n[trader]\r\n"
+        + "trade_front=tcp://127.0.0.1:2\r\nbroker_id=" + encoded("broker")
+        + "\r\nuser_id=" + encoded("trader-user") + "\r\npassword=" + encoded("trade-pass")
+        + "\r\napp_id=" + encoded("test-app") + "\r\nauth_code=" + encoded("test-auth")
+        + "\r\nuser_product_Info=" + encoded("test-product") + "\r\n[control]\r\nloop_interval=1\r\n";
+    replace(ini, text);
+    const std::vector<market_capture_contract> contracts{{"SHFE", "rb2701"}};
+    auto imported = import_legacy_market_config(ini, secret, contracts);
+    require(imported.broker_id == "offline" && imported.user_id == "offline-user"
+        && imported.password == "test-only" && imported.trader
+        && imported.trader->trade_front == "tcp://127.0.0.1:2"
+        && imported.trader->password == "trade-pass" && imported.trader->app_id == "test-app"
+        && imported.trader->auth_code == "test-auth" && imported.trader->user_product_info == "test-product",
+        "legacy XOR and case-insensitive fields are imported");
+    const auto encrypted = root / "imported.enc";
+    const auto key = root / "key";
+    initialize_market_capture_config(imported, encrypted, key);
+    const auto loaded = load_market_capture_config(encrypted, key);
+    require(loaded.trader && loaded.trader->user_id == "trader-user"
+        && loaded.trader->password == "trade-pass" && loaded.password == "test-only",
+        "trader and market fields survive authenticated encryption");
+    require(read(encrypted).find("trade-pass") == std::string::npos, "trader password is not plaintext on disk");
+    fixture files(root / "collector");
+    fake_md_api api;
+    market_capture_session session(load_market_capture_config(encrypted, key),
+        files.paths, root / "state", files.factory(api));
+    ready(session);
+    require(api.has_expected_login && api.subscriptions == std::vector<std::string>{"rb2701"},
+        "imported extended configuration reaches only the read-only market API");
+    session.stop();
+    require_failure([&] { (void)import_legacy_market_config(ini, "", contracts); }, "empty legacy secret rejected");
+    replace(root / "bad.ini", text + "\n[market]\npassword=0\n");
+    require_failure([&] { (void)import_legacy_market_config(root / "bad.ini", secret, contracts); },
+        "duplicate fields rejected");
+    auto invalid = text;
+    const auto pos = invalid.find("password=" + encoded("test-only"));
+    invalid.replace(pos, std::string("password=" + encoded("test-only")).size(), "password=XYZ");
+    replace(root / "invalid.ini", invalid);
+    require_failure([&] { (void)import_legacy_market_config(root / "invalid.ini", secret, contracts); },
+        "invalid legacy hex rejected");
+    require(::chmod(ini.c_str(), 0644) == 0, "change legacy fixture permissions");
+    require_failure([&] { (void)import_legacy_market_config(ini, secret, contracts); },
+        "world-readable legacy configuration rejected");
+}
+
+void test_market_config_selection(const fs::path& root) {
+    fs::create_directories(root);
+    const auto key = root / "key";
+    const auto first = root / "a.enc";
+    const auto second = root / "b.enc";
+    initialize_market_capture_config(config(), first, key);
+    initialize_market_capture_config(config(), second, key);
+    auto selected = first;
+    auto selected_key = key;
+    std::ostringstream output;
+    std::ostringstream errors;
+    std::istringstream input("2\n\n");
+    cli::select_market_config(selected, selected_key, input, output, errors);
+    require(selected == second && selected_key == key && errors.str().empty(),
+        "startup selection changes the chosen encrypted profile");
+    std::istringstream invalid("9\n");
+    cli::select_market_config(selected, selected_key, invalid, output, errors);
+    require(selected == second && errors.str().find("[ERROR]") != std::string::npos,
+        "invalid selection keeps the existing profile");
+    unsigned imports = 0;
+    std::istringstream cancelled("\n\n\n");
+    cli::run_legacy_import_menu(selected, selected_key, cancelled, output, errors,
+        [&] (const fs::path&, const fs::path&) { ++imports; return 0; });
+    require(imports == 0 && selected == second, "cancelled import does not change selection");
+    const auto third = root / "c.enc";
+    std::istringstream failed(third.string() + "\n\nIMPORT\n");
+    cli::run_legacy_import_menu(selected, selected_key, failed, output, errors,
+        [] (const fs::path&, const fs::path&) { return 2; });
+    require(selected == second, "failed import keeps previously selected profile");
+    std::istringstream successful(third.string() + "\n\nIMPORT\n");
+    cli::run_legacy_import_menu(selected, selected_key, successful, output, errors,
+        [&] (const fs::path& path, const fs::path& selected_key_file) {
+            ++imports;
+            initialize_market_capture_config(config(), path, selected_key_file);
+            return 0;
+        });
+    require(imports == 1 && selected == third && selected_key == key,
+        "successful import adopts both selected paths");
+}
+
+void test_initial_ctp_key_menu(const fs::path& root) {
+    auto encrypted = root / "old.enc";
+    auto key = root / "old.key";
+    const auto selected_config = root / "config" / "selected.enc";
+    const auto selected_key = root / "keys" / "selected.key";
+    const auto commands = selected_config.string() + "\n" + selected_key.string() + "\n";
+    std::ostringstream output;
+    std::ostringstream errors;
+    unsigned calls = 0;
+    const auto initialize = [&] (const fs::path& config_file, const fs::path& key_file) {
+        ++calls;
+        initialize_market_capture_config(config(), config_file, key_file);
+        return 0;
+    };
+    std::istringstream cancelled(commands + "\n");
+    cli::run_initial_ctp_key_menu(encrypted, key, cancelled, output, errors, initialize);
+    require(calls == 0 && encrypted == root / "old.enc" && !fs::exists(selected_key),
+        "cancel does not generate a key or change selected paths");
+    std::istringstream failed(commands + "INITIALIZE\n");
+    cli::run_initial_ctp_key_menu(encrypted, key, failed, output, errors,
+        [] (const fs::path&, const fs::path&) { return 2; });
+    require(encrypted == root / "old.enc" && key == root / "old.key"
+        && errors.str().find("[ERROR]") != std::string::npos, "utility failure preserves current paths and is visible");
+    std::istringstream confirmed(commands + "INITIALIZE\n");
+    cli::run_initial_ctp_key_menu(encrypted, key, confirmed, output, errors, initialize);
+    require(calls == 1 && encrypted == selected_config && key == selected_key,
+        "successful initializer updates the capture paths for this CLI session");
+    require(load_market_capture_config(encrypted, key).contracts.size() == 2,
+        "menu initialization produces a decryptable configuration with configured contracts");
+    require(output.str().find("test-only") == std::string::npos
+        && output.str().find("offline-user") == std::string::npos, "initialization menu does not expose credentials");
+}
+
 void test_menu_to_tick_chain(const fs::path& root) {
     fixture files(root);
     const auto key = root / "key";
@@ -352,6 +517,10 @@ int main() {
     const fs::path root(created);
     try {
         test_authenticated_config(root / "crypto");
+        test_configuration_initialization(root / "initialization");
+        test_legacy_import(root / "legacy");
+        test_market_config_selection(root / "selection");
+        test_initial_ctp_key_menu(root / "initialization_menu");
         test_menu_to_tick_chain(root / "chain");
         test_failures(root / "failures");
         test_output_boundaries(root / "boundaries");

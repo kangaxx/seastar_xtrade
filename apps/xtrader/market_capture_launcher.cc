@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <system_error>
 #include <sys/wait.h>
+#include <vector>
 
 extern char** environ;
 
@@ -21,14 +22,22 @@ std::filesystem::path default_path(const char* variable, const char* fallback) {
     return value && *value ? value : fallback;
 }
 
-int launch(const std::filesystem::path& config, const std::filesystem::path& key) {
-    const auto executable = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "xtrader_market_capture";
-    std::string program = executable.string();
-    std::string config_argument = config.string();
-    std::string key_argument = key.string();
-    char config_option[] = "--config";
-    char key_option[] = "--key-file";
-    char* arguments[]{program.data(), config_option, config_argument.data(), key_option, key_argument.data(), nullptr};
+struct selected_market_files {
+    std::filesystem::path config = default_path("XTRADER_MARKET_CONFIG", "/etc/xtrader/market.enc");
+    std::filesystem::path key = default_path("XTRADER_MARKET_KEY_FILE", "/etc/xtrader/market.key");
+};
+
+selected_market_files& current_files() {
+    static selected_market_files files;
+    return files;
+}
+
+int launch(const char* name, std::vector<std::string> arguments) {
+    const auto executable = std::filesystem::read_symlink("/proc/self/exe").parent_path() / name;
+    arguments.insert(arguments.begin(), executable.string());
+    std::vector<char*> argv;
+    for (auto& argument : arguments) { argv.push_back(argument.data()); }
+    argv.push_back(nullptr);
     posix_spawnattr_t attributes;
     auto result = ::posix_spawnattr_init(&attributes);
     if (result != 0) { throw std::system_error(result, std::generic_category(), "prepare market process"); }
@@ -44,10 +53,10 @@ int launch(const std::filesystem::path& config, const std::filesystem::path& key
         result = ::posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF);
     }
     pid_t child = -1;
-    if (!result) { result = ::posix_spawn(&child, program.c_str(), nullptr, &attributes, arguments, environ); }
+    if (!result) { result = ::posix_spawn(&child, executable.c_str(), nullptr, &attributes, argv.data(), environ); }
     ::posix_spawnattr_destroy(&attributes);
     if (result) {
-        throw std::system_error(result, std::generic_category(), "start sibling xtrader_market_capture (build it first)");
+        throw std::system_error(result, std::generic_category(), "start sibling market utility (build it first)");
     }
     int status = 0;
     while (::waitpid(child, &status, 0) < 0) {
@@ -59,9 +68,32 @@ int launch(const std::filesystem::path& config, const std::filesystem::path& key
 } // namespace
 
 void open_market_capture_menu() {
-    run_market_capture_menu(default_path("XTRADER_MARKET_CONFIG", "/etc/xtrader/market.enc"),
-        default_path("XTRADER_MARKET_KEY_FILE", "/etc/xtrader/market.key"),
-        std::cin, std::cout, std::cerr, launch);
+    const auto& files = current_files();
+    run_market_capture_menu(files.config, files.key, std::cin, std::cout, std::cerr,
+        [] (const auto& config, const auto& key) {
+            return launch("xtrader_market_capture", {"--config", config.string(), "--key-file", key.string()});
+        });
+}
+
+void open_initial_ctp_key_menu() {
+    auto& files = current_files();
+    run_initial_ctp_key_menu(files.config, files.key, std::cin, std::cout, std::cerr,
+        [] (const auto& config, const auto& key) {
+            return launch("xtrader_market_config", {"--initialize", config.string(), key.string()});
+        });
+}
+
+void open_market_config_selection() {
+    auto& files = current_files();
+    select_market_config(files.config, files.key, std::cin, std::cout, std::cerr);
+}
+
+void open_legacy_import_menu() {
+    auto& files = current_files();
+    run_legacy_import_menu(files.config, files.key, std::cin, std::cout, std::cerr,
+        [] (const auto& config, const auto& key) {
+            return launch("xtrader_market_config", {"--import-legacy", config.string(), key.string()});
+        });
 }
 
 } // namespace seastar::xtrader::cli
