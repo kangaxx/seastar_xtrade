@@ -52,6 +52,7 @@ std::vector<market_capture_contract> parse_market_capture_contracts(const std::s
 market_capture_config import_legacy_market_config(const std::filesystem::path& ini_file,
                                                   const std::string& secret,
                                                   std::vector<market_capture_contract> contracts);
+market_capture_config import_plaintext_market_config(const std::filesystem::path& ini_file);
 void create_market_capture_key(const std::filesystem::path& key_file);
 // Initialize a new encrypted config, creating or securely reusing its external key.
 void initialize_market_capture_config(const market_capture_config& config,

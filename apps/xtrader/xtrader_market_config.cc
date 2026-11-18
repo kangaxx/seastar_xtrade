@@ -88,6 +88,18 @@ void import_config(const char* output, const char* key) {
     std::cout << "[OK] Legacy configuration saved with authenticated encryption; trading remains disabled.\n";
 }
 
+void import_plaintext_config(const char* source, const char* output, const char* key) {
+    if (!::isatty(STDIN_FILENO) || !::isatty(STDOUT_FILENO)) {
+        throw std::runtime_error("plaintext INI import requires an interactive terminal");
+    }
+    const auto config = seastar::xtrader::import_plaintext_market_config(source);
+    seastar::xtrader::initialize_market_capture_config(config, output, key);
+    std::cout << "[OK] Plaintext INI imported into an encrypted configuration; credentials were not displayed.\n"
+              << "[INFO] Encrypted configuration: " << output << '\n'
+              << "[INFO] No contract was imported; choose concrete contracts when starting capture.\n"
+              << "[INFO] Trading remains disabled.\n";
+}
+
 void create_config(const char* output, const char* key, bool initialize = false) {
     seastar::xtrader::market_capture_config config;
     config.market_front = prompt("CTP market front (tcp://hostname:port)");
@@ -113,6 +125,7 @@ int main(int argc, char** argv) {
                          "xtrader_market_config --create ENCRYPTED_CONFIG KEY_FILE\n"
                          "xtrader_market_config --initialize ENCRYPTED_CONFIG KEY_FILE\n"
                          "xtrader_market_config --import-legacy ENCRYPTED_CONFIG KEY_FILE\n"
+                         "xtrader_market_config --import-plaintext SOURCE_INI ENCRYPTED_CONFIG KEY_FILE\n"
                          "--initialize creates missing parent directories and creates/reuses an external key.\n"
                          "Files are owner-only and never overwritten. Password entry requires a terminal.\n";
             return 0;
@@ -132,6 +145,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 4 && std::string(argv[1]) == "--import-legacy") {
             import_config(argv[2], argv[3]);
+            return 0;
+        }
+        if (argc == 5 && std::string(argv[1]) == "--import-plaintext") {
+            import_plaintext_config(argv[2], argv[3], argv[4]);
             return 0;
         }
         throw std::invalid_argument("invalid arguments; use --help");

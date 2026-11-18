@@ -258,6 +258,7 @@ void run_root_menu() {
         std::cout << "10) Initial CTP key" << std::endl;
         std::cout << "11) Select encrypted market configuration" << std::endl;
         std::cout << "12) Import legacy X-Trader INI" << std::endl;
+        std::cout << "13) Import plaintext X-Trader INI" << std::endl;
         std::cout << "q) Quit" << std::endl;
         std::cout << "==================================" << std::endl;
         std::cout << "Select: ";
@@ -397,6 +398,8 @@ void run_root_menu() {
             seastar::xtrader::cli::open_market_config_selection();
         } else if (input == "12") {
             seastar::xtrader::cli::open_legacy_import_menu();
+        } else if (input == "13") {
+            seastar::xtrader::cli::open_plaintext_import_menu();
         } else if (input == "q" || input == "quit" || input == "exit") {
             std::cout << "Goodbye!" << std::endl;
             break;

@@ -4,6 +4,7 @@
 
 #include <cerrno>
 #include <csignal>
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <spawn.h>
@@ -93,6 +94,24 @@ void open_legacy_import_menu() {
     run_legacy_import_menu(files.config, files.key, std::cin, std::cout, std::cerr,
         [] (const auto& config, const auto& key) {
             return launch("xtrader_market_config", {"--import-legacy", config.string(), key.string()});
+        });
+}
+
+void open_plaintext_import_menu() {
+    auto& files = current_files();
+    run_plaintext_import_menu(files.config, std::cin, std::cout, std::cerr,
+        [&] (const auto& source) {
+            const auto directory = files.config.has_parent_path() ? files.config.parent_path()
+                                                                    : std::filesystem::path(".");
+            const auto stamp = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            const auto imported = directory / ("market-plaintext-import-" + std::to_string(stamp) + ".enc");
+            const auto status = launch("xtrader_market_config",
+                {"--import-plaintext", source.string(), imported.string(), files.key.string()});
+            if (status != 0) {
+                throw std::runtime_error("plaintext INI import utility exited with status " + std::to_string(status));
+            }
+            return imported;
         });
 }
 

@@ -9,6 +9,7 @@
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <system_error>
 #include <poll.h>
 #include <sys/prctl.h>
@@ -85,6 +86,19 @@ int main(int argc, char** argv) {
         install_signals();
         std::cout.exceptions(std::ios::badbit | std::ios::failbit);
         auto config = seastar::xtrader::load_market_capture_config(argv[2], argv[4]);
+        if (config.contracts.empty()) {
+            if (!::isatty(STDIN_FILENO)) {
+                throw std::runtime_error("this imported configuration has no contracts; start from an interactive terminal");
+            }
+            std::string contracts;
+            std::cout << "This configuration has no contracts. Enter concrete contracts "
+                         "(EXCHANGE:instrument, comma separated): " << std::flush;
+            if (!std::getline(std::cin, contracts)) {
+                throw std::runtime_error("contract selection cancelled");
+            }
+            config.contracts = seastar::xtrader::parse_market_capture_contracts(contracts);
+            seastar::xtrader::validate_market_capture_config(config);
+        }
         if (STOP_REQUESTED) { throw std::runtime_error("market capture cancelled before connecting"); }
         session = std::make_unique<seastar::xtrader::market_capture_session>(
             std::move(config), seastar::xtrader::market_data_paths{}, state_directory(),

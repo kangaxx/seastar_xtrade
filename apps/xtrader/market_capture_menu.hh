@@ -21,7 +21,9 @@ inline void run_market_capture_menu(
         const std::function<int(const std::filesystem::path&, const std::filesystem::path&)>& launch) {
     std::string line;
     while (true) {
-        output << "\n[Read-only CTP Market Capture]\nEncrypted config: " << config.string()
+        output << "\n[Read-only CTP Market Capture]\n"
+               << "A configuration without contracts will prompt for them before connecting.\n"
+               << "Encrypted config: " << config.string()
                << "\nKey file: " << key.string()
                << "\n1) Set encrypted config path\n2) Set key file path\n"
                   "3) Start live market capture (no trading)\nu) Back\nSelect: " << std::flush;
@@ -187,5 +189,28 @@ inline void run_legacy_import_menu(
 
 void open_market_config_selection();
 void open_legacy_import_menu();
+
+inline void run_plaintext_import_menu(
+        std::filesystem::path& config, std::istream& input, std::ostream& output, std::ostream& errors,
+        const std::function<std::filesystem::path(const std::filesystem::path&)>& importer) {
+    output << "\n[Import plaintext X-Trader INI]\n"
+              "The source contains credentials. It must be an owner-only regular file.\n"
+              "Enter the complete plaintext INI path (u cancels): " << std::flush;
+    std::string line;
+    if (!std::getline(input, line) || line.empty() || line == "u") { return; }
+    try {
+        auto imported = importer(std::filesystem::path(line));
+        if (imported.empty()) {
+            errors << "[ERROR] Plaintext INI import did not produce an encrypted configuration.\n";
+            return;
+        }
+        config = std::move(imported);
+        output << "[OK] Encrypted configuration created and selected for this CLI session.\n";
+    } catch (const std::exception& error) {
+        errors << "[ERROR] Cannot import plaintext INI: " << error.what() << '\n';
+    }
+}
+
+void open_plaintext_import_menu();
 
 } // namespace seastar::xtrader::cli

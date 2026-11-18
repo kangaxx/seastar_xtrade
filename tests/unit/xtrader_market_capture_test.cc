@@ -273,6 +273,55 @@ void test_legacy_import(const fs::path& root) {
         "world-readable legacy configuration rejected");
 }
 
+void test_plaintext_import(const fs::path& root) {
+    fs::create_directories(root);
+    const auto source = root / "plain.ini";
+    const auto text = std::string("\xef\xbb\xbf[market]\r\nmarket_front=tcp://127.0.0.1:1\r\n")
+        + "broker_id=offline\r\nuser_id=offline-user\r\npassword=market-pass\r\n"
+          "[trader]\r\ntrade_front=tcp://127.0.0.1:2\r\nbroker_id=trader-broker\r\n"
+          "user_id=trader-user\r\npassword=trade-pass\r\napp_id=test-app\r\n"
+          "auth_code=test-auth\r\nuser_product_Info=test-product\r\n"
+          "[control]\r\nbind_cpu_core=0\r\nloop_interval=1\r\n";
+    replace(source, text);
+    auto imported = import_plaintext_market_config(source);
+    require(imported.broker_id == "offline" && imported.user_id == "offline-user"
+        && imported.password == "market-pass" && imported.trader
+        && imported.trader->password == "trade-pass" && imported.trader->app_id == "test-app"
+        && imported.contracts.empty(), "plaintext INI fields imported without prompting for credentials or contracts");
+
+    const auto encrypted = root / "market-plaintext-import.enc";
+    const auto key = root / "key";
+    initialize_market_capture_config(imported, encrypted, key);
+    const auto loaded = load_market_capture_config(encrypted, key);
+    require(loaded.contracts.empty() && loaded.trader && loaded.trader->auth_code == "test-auth"
+        && loaded.password == "market-pass", "empty-contract plaintext import survives encryption");
+    const auto envelope = read(encrypted);
+    require(envelope.find("market-pass") == std::string::npos
+        && envelope.find("trade-pass") == std::string::npos, "plaintext credentials are encrypted at rest");
+    fake_md_api api;
+    require_failure([&] {
+        market_capture_session session(load_market_capture_config(encrypted, key),
+            market_data_paths(root / "data"), root / "state",
+            [&] (const char*) { return &api; });
+    }, "a configuration without contracts cannot start a collector");
+    require(api.spi == nullptr, "missing contracts are rejected before creating the CTP API");
+
+    auto selected = root / "previous.enc";
+    std::ostringstream output;
+    std::ostringstream errors;
+    std::istringstream input(source.string() + "\n");
+    cli::run_plaintext_import_menu(selected, input, output, errors,
+        [&] (const fs::path& path) {
+            require(path == source, "plaintext importer receives only the supplied source path");
+            return encrypted;
+        });
+    require(selected == encrypted && errors.str().empty(), "successful plaintext import selects generated config");
+    std::istringstream cancelled("u\n");
+    cli::run_plaintext_import_menu(selected, cancelled, output, errors,
+        [] (const fs::path&) -> fs::path { throw std::runtime_error("must not run"); });
+    require(selected == encrypted, "cancelled plaintext import preserves selected config");
+}
+
 void test_market_config_selection(const fs::path& root) {
     fs::create_directories(root);
     const auto key = root / "key";
@@ -519,6 +568,7 @@ int main() {
         test_authenticated_config(root / "crypto");
         test_configuration_initialization(root / "initialization");
         test_legacy_import(root / "legacy");
+        test_plaintext_import(root / "plaintext");
         test_market_config_selection(root / "selection");
         test_initial_ctp_key_menu(root / "initialization_menu");
         test_menu_to_tick_chain(root / "chain");

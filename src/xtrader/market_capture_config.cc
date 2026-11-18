@@ -63,9 +63,9 @@ std::string serialize(const market_capture_config& config) {
     std::string text = "broker_id=" + config.broker_id + "\nuser_id=" + config.user_id
         + "\npassword=" + config.password + "\nmarket_front=" + config.market_front + "\ncontracts=";
     for (const auto& contract : config.contracts) {
-        text += contract.exchange + ":" + contract.instrument + ",";
+        if (text.back() != '=') { text += ','; }
+        text += contract.exchange + ":" + contract.instrument;
     }
-    text.pop_back();
     text += "\n";
     if (config.trader) {
         const auto& trader = *config.trader;
@@ -99,7 +99,9 @@ market_capture_config parse(const std::string& text) {
     config.user_id = fields.at("user_id");
     config.password = fields.at("password");
     config.market_front = fields.at("market_front");
-    config.contracts = parse_market_capture_contracts(std::string(fields.at("contracts")));
+    if (!fields.at("contracts").empty()) {
+        config.contracts = parse_market_capture_contracts(std::string(fields.at("contracts")));
+    }
     if (fields.size() == 12) {
         for (const auto* name : {"trade_front", "trader_broker_id", "trader_user_id", "trader_password",
                                  "trader_app_id", "trader_auth_code", "trader_user_product_info"}) {
@@ -121,6 +123,49 @@ market_capture_config parse(const std::string& text) {
 }
 
 using cipher_context = std::unique_ptr<EVP_CIPHER_CTX, decltype(&EVP_CIPHER_CTX_free)>;
+
+std::map<std::string, std::string_view> parse_ini_fields(std::string_view contents) {
+    std::map<std::string, std::string_view> fields;
+    std::string section;
+    if (contents.starts_with("\xef\xbb\xbf")) { contents.remove_prefix(3); }
+    const auto trim = [] (std::string_view text) {
+        const auto first = text.find_first_not_of(" \t\r");
+        if (first == std::string_view::npos) { return std::string_view{}; }
+        return text.substr(first, text.find_last_not_of(" \t\r") - first + 1);
+    };
+    const auto lower = [] (std::string_view text) {
+        std::string result(text);
+        std::transform(result.begin(), result.end(), result.begin(),
+            [] (unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        return result;
+    };
+    while (!contents.empty()) {
+        const auto newline = contents.find('\n');
+        auto line = trim(contents.substr(0, newline));
+        contents = newline == std::string_view::npos ? std::string_view{} : contents.substr(newline + 1);
+        if (line.empty() || line.front() == ';' || line.front() == '#') { continue; }
+        if (line.front() == '[' && line.back() == ']') {
+            section = lower(trim(line.substr(1, line.size() - 2)));
+            continue;
+        }
+        const auto separator = line.find_first_of("=:");
+        if (separator == std::string_view::npos || section.empty()) {
+            throw std::invalid_argument("invalid INI syntax");
+        }
+        auto value = trim(line.substr(separator + 1));
+        for (std::size_t i = 1; i < value.size(); ++i) {
+            if (value[i] == ';' && (value[i - 1] == ' ' || value[i - 1] == '\t')) {
+                value = trim(value.substr(0, i));
+                break;
+            }
+        }
+        const auto name = section + "." + lower(trim(line.substr(0, separator)));
+        if (!fields.emplace(name, value).second) {
+            throw std::invalid_argument("duplicate INI field");
+        }
+    }
+    return fields;
+}
 
 cipher_context new_context() {
     cipher_context context(EVP_CIPHER_CTX_new(), EVP_CIPHER_CTX_free);
@@ -147,46 +192,7 @@ market_capture_config import_legacy_market_config(const std::filesystem::path& i
                                                   std::vector<market_capture_contract> contracts) {
     if (secret.empty()) { throw std::invalid_argument("legacy INI secret is empty"); }
     secret_text contents{capture_detail::read_private_file(ini_file, MAX_CONFIG_SIZE)};
-    std::map<std::string, std::string_view> fields;
-    std::string section;
-    std::string_view remaining(contents.value);
-    if (remaining.starts_with("\xef\xbb\xbf")) { remaining.remove_prefix(3); }
-    auto trim = [] (std::string_view text) {
-        const auto first = text.find_first_not_of(" \t\r");
-        if (first == std::string_view::npos) { return std::string_view{}; }
-        return text.substr(first, text.find_last_not_of(" \t\r") - first + 1);
-    };
-    auto lower = [] (std::string_view text) {
-        std::string result(text);
-        std::transform(result.begin(), result.end(), result.begin(),
-            [] (unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-        return result;
-    };
-    while (!remaining.empty()) {
-        const auto newline = remaining.find('\n');
-        auto line = trim(remaining.substr(0, newline));
-        remaining = newline == std::string_view::npos ? std::string_view{} : remaining.substr(newline + 1);
-        if (line.empty() || line.front() == ';' || line.front() == '#') { continue; }
-        if (line.front() == '[' && line.back() == ']') {
-            section = lower(trim(line.substr(1, line.size() - 2)));
-            continue;
-        }
-        const auto separator = line.find_first_of("=:");
-        if (separator == std::string_view::npos || section.empty()) {
-            throw std::invalid_argument("invalid legacy INI syntax");
-        }
-        auto value = trim(line.substr(separator + 1));
-        for (std::size_t i = 1; i < value.size(); ++i) {
-            if (value[i] == ';' && (value[i - 1] == ' ' || value[i - 1] == '\t')) {
-                value = trim(value.substr(0, i));
-                break;
-            }
-        }
-        const auto name = section + "." + lower(trim(line.substr(0, separator)));
-        if (!fields.emplace(name, value).second) {
-            throw std::invalid_argument("duplicate legacy INI field");
-        }
-    }
+    auto fields = parse_ini_fields(contents.value);
     auto field = [&] (const char* name) -> std::string_view {
         const auto it = fields.find(name);
         if (it == fields.end()) { throw std::invalid_argument(std::string("missing legacy INI field: ") + name); }
@@ -223,6 +229,41 @@ market_capture_config import_legacy_market_config(const std::filesystem::path& i
     config.trader->app_id = decrypt("trader.app_id");
     config.trader->auth_code = decrypt("trader.auth_code");
     config.trader->user_product_info = decrypt("trader.user_product_info");
+    validate_market_capture_config(config);
+    return config;
+}
+
+market_capture_config import_plaintext_market_config(const std::filesystem::path& ini_file) {
+    secret_text contents{capture_detail::read_private_file(ini_file, MAX_CONFIG_SIZE)};
+    const auto fields = parse_ini_fields(contents.value);
+    const auto field = [&] (const char* name) -> std::string_view {
+        const auto it = fields.find(name);
+        if (it == fields.end()) { throw std::invalid_argument(std::string("missing plaintext INI field: ") + name); }
+        return it->second;
+    };
+    const auto has_trader_field = std::any_of(fields.begin(), fields.end(), [] (const auto& entry) {
+        return entry.first.starts_with("trader.");
+    });
+
+    market_capture_config config;
+    config.market_front = field("market.market_front");
+    config.broker_id = field("market.broker_id");
+    config.user_id = field("market.user_id");
+    config.password = field("market.password");
+    if (has_trader_field) {
+        config.trader.emplace();
+        config.trader->trade_front = field("trader.trade_front");
+        config.trader->broker_id = field("trader.broker_id");
+        config.trader->user_id = field("trader.user_id");
+        config.trader->password = field("trader.password");
+        config.trader->app_id = field("trader.app_id");
+        config.trader->auth_code = field("trader.auth_code");
+        config.trader->user_product_info = field("trader.user_product_info");
+    }
+    if (const auto contracts = fields.find("market.contracts"); contracts != fields.end()
+            && !contracts->second.empty()) {
+        config.contracts = parse_market_capture_contracts(std::string(contracts->second));
+    }
     validate_market_capture_config(config);
     return config;
 }
@@ -266,8 +307,8 @@ void validate_market_capture_config(const market_capture_config& config) {
     if (parsed.ec != std::errc{} || parsed.ptr != end || port == 0 || port > 65535) {
         throw std::invalid_argument("market_front requires a valid TCP port");
     }
-    if (config.contracts.empty() || config.contracts.size() > 64) {
-        throw std::invalid_argument("configure between 1 and 64 concrete futures contracts");
+    if (config.contracts.size() > 64) {
+        throw std::invalid_argument("configure no more than 64 concrete futures contracts");
     }
     const std::set<std::string> exchanges{"SHFE", "DCE", "CZCE", "CFFEX", "INE", "GFEX"};
     std::set<std::string> instruments;
