@@ -42,6 +42,37 @@ build/release/apps/xtrader/xtrader_market_capture
 build/release/apps/xtrader/xtrader_market_config
 ```
 
+### 注册为系统命令
+
+在 LD/Linux 编译完成后执行：
+
+```bash
+sudo bash register_xtrader_release.sh
+hash -r
+type -a xtrader_cli
+xtrader_cli --smp 1 --memory 512M --overprovisioned
+```
+
+注册脚本将 Release 目录内可执行的 `xtrader_*` 程序以同名软链接注册到 `/usr/local/bin`，
+不复制程序、不启动服务、不连接 CTP，也不修改配置、密钥或 shell 的 PATH。
+运行 CLI 本身不需要 sudo，应继续使用持有配置和密钥的原运行账号。
+动态库仍使用构建时的查找路径，注册不替代依赖安装。
+
+无管理员权限时：
+
+```bash
+bash register_xtrader_release.sh --bin-dir "$HOME/.local/bin"
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+如需永久生效，将 `export` 行加入该用户的 shell 配置。脚本提供中文输出及 `--help`。
+同目录重新编译后链接立即指向新产物；新增程序后再次运行注册脚本即可自动发现。
+切换构建位置时，使用 `--release-dir /绝对路径/build/release/apps/xtrader`；
+已有同名软链接指向其他位置时，须核对后显式添加 `--replace-links`。
+脚本绝不覆盖普通文件或目录，也不自动删除已移除程序留下的旧链接。
+不要删除或移动被链接的构建目录；仓库若位于其他用户无法遍历的私有目录，
+注册到系统 PATH 并不会自动赋予访问权限。
+
 独立离线检查不链接真实 CTP 库，不连接服务器，不使用生产 `/data`：
 
 ```bash
