@@ -194,7 +194,7 @@ inline void run_plaintext_import_menu(
         std::filesystem::path& config, std::istream& input, std::ostream& output, std::ostream& errors,
         const std::function<std::filesystem::path(const std::filesystem::path&)>& importer) {
     output << "\n[Import plaintext X-Trader INI]\n"
-              "The source contains credentials. It must be an owner-only regular file.\n"
+              "The source contains credentials. It must be a readable regular file.\n"
               "Enter the complete plaintext INI path (u cancels): " << std::flush;
     std::string line;
     if (!std::getline(input, line) || line.empty() || line == "u") { return; }

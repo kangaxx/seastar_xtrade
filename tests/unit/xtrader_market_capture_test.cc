@@ -269,8 +269,8 @@ void test_legacy_import(const fs::path& root) {
     require_failure([&] { (void)import_legacy_market_config(root / "invalid.ini", secret, contracts); },
         "invalid legacy hex rejected");
     require(::chmod(ini.c_str(), 0644) == 0, "change legacy fixture permissions");
-    require_failure([&] { (void)import_legacy_market_config(ini, secret, contracts); },
-        "world-readable legacy configuration rejected");
+    require(import_legacy_market_config(ini, secret, contracts).password == "test-only",
+        "world-readable legacy import source is accepted");
 }
 
 void test_plaintext_import(const fs::path& root) {
@@ -283,6 +283,7 @@ void test_plaintext_import(const fs::path& root) {
           "auth_code=test-auth\r\nuser_product_Info=test-product\r\n"
           "[control]\r\nbind_cpu_core=0\r\nloop_interval=1\r\n";
     replace(source, text);
+    require(::chmod(source.c_str(), 0644) == 0, "make plaintext import source readable by other users");
     auto imported = import_plaintext_market_config(source);
     require(imported.broker_id == "offline" && imported.user_id == "offline-user"
         && imported.password == "market-pass" && imported.trader

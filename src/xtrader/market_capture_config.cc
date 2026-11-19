@@ -191,7 +191,7 @@ market_capture_config import_legacy_market_config(const std::filesystem::path& i
                                                   const std::string& secret,
                                                   std::vector<market_capture_contract> contracts) {
     if (secret.empty()) { throw std::invalid_argument("legacy INI secret is empty"); }
-    secret_text contents{capture_detail::read_private_file(ini_file, MAX_CONFIG_SIZE)};
+    secret_text contents{capture_detail::read_import_source_file(ini_file, MAX_CONFIG_SIZE)};
     auto fields = parse_ini_fields(contents.value);
     auto field = [&] (const char* name) -> std::string_view {
         const auto it = fields.find(name);
@@ -234,7 +234,7 @@ market_capture_config import_legacy_market_config(const std::filesystem::path& i
 }
 
 market_capture_config import_plaintext_market_config(const std::filesystem::path& ini_file) {
-    secret_text contents{capture_detail::read_private_file(ini_file, MAX_CONFIG_SIZE)};
+    secret_text contents{capture_detail::read_import_source_file(ini_file, MAX_CONFIG_SIZE)};
     const auto fields = parse_ini_fields(contents.value);
     const auto field = [&] (const char* name) -> std::string_view {
         const auto it = fields.find(name);

@@ -57,7 +57,7 @@ void import_config(const char* output, const char* key) {
     if (!::isatty(STDIN_FILENO) || !::isatty(STDOUT_FILENO)) {
         throw std::runtime_error("legacy import and plaintext review require an interactive terminal");
     }
-    const auto source = prompt("Legacy X-Trader INI path (owner-only file)");
+    const auto source = prompt("Legacy X-Trader INI path (readable regular file)");
     secret_text secret{password_prompt("Legacy XTRADER_INI_SECRET (hidden)")};
     auto contracts = seastar::xtrader::parse_market_capture_contracts(
         prompt("Concrete contracts, comma separated (EXCHANGE:instrument; no spaces)"));

@@ -86,6 +86,28 @@ inline std::string read_private_file(const std::filesystem::path& path, std::siz
     }
 }
 
+inline std::string read_import_source_file(const std::filesystem::path& path, std::size_t limit) {
+    file_descriptor file(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK));
+    if (file.get() < 0) { io_error("open plaintext INI import source"); }
+    struct stat status{};
+    if (::fstat(file.get(), &status) != 0) { io_error("inspect plaintext INI import source"); }
+    if (!S_ISREG(status.st_mode)) {
+        throw std::runtime_error("plaintext INI import source must be a regular file");
+    }
+    std::string result;
+    char buffer[4096];
+    while (true) {
+        const auto count = ::read(file.get(), buffer, sizeof(buffer));
+        if (count < 0 && errno == EINTR) { continue; }
+        if (count < 0) { io_error("read plaintext INI import source"); }
+        if (count == 0) { return result; }
+        if (result.size() + static_cast<std::size_t>(count) > limit) {
+            throw std::runtime_error("plaintext INI import source exceeds its size limit");
+        }
+        result.append(buffer, static_cast<std::size_t>(count));
+    }
+}
+
 inline void create_private_file(const std::filesystem::path& path, const std::string& data) {
     file_descriptor file(::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
     if (file.get() < 0) { io_error("create private file (existing files are never overwritten)"); }
