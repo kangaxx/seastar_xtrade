@@ -151,7 +151,7 @@ void print_env_summary(const std::filesystem::path& env_dir, size_t index) {
 void show_config_info(const seastar::xtrader::market_data_paths& paths,
                       const std::filesystem::path& selected_data_root) {
     std::cout << "\n========== Configuration Info ==========" << std::endl;
-    std::cout << "Version:    " << seastar::xtrader::version << std::endl;
+    std::cout << "Version:    " << seastar::xtrader::get_full_version() << std::endl;
     std::cout << "Build:      " << seastar::xtrader::build_type << std::endl;
     std::cout << "Git Commit: " << seastar::xtrader::git_commit << std::endl;
     std::cout << "Git Branch: " << seastar::xtrader::git_branch << std::endl;
@@ -414,7 +414,7 @@ void run_root_menu() {
 int main(int ac, char** av) {
     std::cout << "========================================" << std::endl;
     std::cout << "X-Trader Seastar Trading Engine v"
-              << seastar::xtrader::version << std::endl;
+              << seastar::xtrader::get_full_version() << std::endl;
     std::cout << "Build: " << seastar::xtrader::build_type
               << " | Git: " << seastar::xtrader::git_commit << std::endl;
     std::cout << "========================================" << std::endl;

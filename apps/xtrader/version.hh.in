@@ -19,16 +19,24 @@
 
 #include <seastar/core/sstring.hh>
 
+#include <cctype>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <unistd.h>
+
 namespace seastar::xtrader {
 
 // ============================================================
 // X-Trader Seastar 版本信息
 // ============================================================
 
-inline constexpr const char* version = "0.1.3";
-inline constexpr const char* version_major = "0";
-inline constexpr const char* version_minor = "1";
-inline constexpr const char* version_patch = "3";
+inline constexpr const char* version = "@XTRADER_STATIC_VERSION@";
+inline constexpr const char* version_major = "@XTRADER_VERSION_MAJOR@";
+inline constexpr const char* version_minor = "@XTRADER_VERSION_MINOR@";
+inline constexpr const char* version_patch = "@XTRADER_VERSION_FEATURE@";
 
 // ============================================================
 // 构建信息（由 CMake 自动注入）
@@ -72,8 +80,47 @@ inline constexpr const char* app_description = "Seastar-based quantitative tradi
 // 版本信息查询函数
 // ============================================================
 
+inline std::string get_build_variant() {
+    std::string variant{build_type};
+    for (char& ch : variant) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return variant == "debug" || variant == "release" ? variant : "unknown";
+}
+
+inline std::filesystem::path get_build_info_file() {
+    std::error_code error;
+    const auto executable = std::filesystem::canonical("/proc/self/exe", error);
+    if (error) { return {}; }
+    for (auto directory = executable.parent_path(); !directory.empty(); directory = directory.parent_path()) {
+        const auto name = directory.filename().string();
+        if (name == "debug" || name == "release") {
+            return directory.parent_path() / (name + "-build-info") / "xtrader-build-info.txt";
+        }
+    }
+    return {};
+}
+
+inline sstring get_full_version() {
+    std::string serial = "0";
+    const auto info_file = get_build_info_file();
+    std::ifstream input(info_file);
+    if (input) {
+        std::string line;
+        bool in_history = false;
+        while (std::getline(input, line)) {
+            if (line == "[history]") { in_history = true; continue; }
+            if (!in_history && line.starts_with("current_serial=")) {
+                serial = line.substr(std::string("current_serial=").size());
+                break;
+            }
+        }
+    }
+    return sstring(version) + "." + serial + "." + get_build_variant();
+}
+
 inline sstring get_version_string() {
-    return sstring("xtrader ") + version;
+    return sstring("xtrader ") + get_full_version();
 }
 
 inline sstring get_build_info() {
@@ -92,7 +139,7 @@ inline void print_version_detailed() {
     std::cout << "============================================" << std::endl;
     std::cout << "  X-Trader Seastar Trading Engine" << std::endl;
     std::cout << "============================================" << std::endl;
-    std::cout << "Version:    " << version << std::endl;
+    std::cout << "Version:    " << get_full_version() << std::endl;
     std::cout << "Major:      " << version_major << std::endl;
     std::cout << "Minor:      " << version_minor << std::endl;
     std::cout << "Patch:      " << version_patch << std::endl;

@@ -1,6 +1,7 @@
 // Foreground read-only SDK worker; no TraderApi, strategies, order or account API.
 // Source: user request, 2026-11-13. Signature: GitHub Copilot (Auto).
 #include <seastar/xtrader/market_capture.hh>
+#include <seastar/xtrader/version.hh>
 #include <ThostFtdcMdApi.h>
 
 #include <cerrno>
@@ -74,6 +75,8 @@ void install_signals() {
 int main(int argc, char** argv) {
     std::unique_ptr<seastar::xtrader::market_capture_session> session;
     try {
+        std::cout << "X-Trader Seastar Trading Engine v"
+                  << seastar::xtrader::get_full_version() << std::endl;
         if (argc == 2 && std::string(argv[1]) == "--help") {
             std::cout << "xtrader_market_capture --config ENCRYPTED_CONFIG --key-file KEY_FILE\n"
                          "Read-only CTP MdApi collector. Enter, SIGINT or SIGTERM stops and syncs files.\n"

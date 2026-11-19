@@ -1,6 +1,7 @@
 // Interactive config creation and explicit legacy INI import.
 // Source: user request, 2026-11-13. Signature: GitHub Copilot (Auto).
 #include <seastar/xtrader/market_capture_config.hh>
+#include <seastar/xtrader/version.hh>
 
 #include <iostream>
 #include <openssl/crypto.h>
@@ -120,6 +121,8 @@ void create_config(const char* output, const char* key, bool initialize = false)
 
 int main(int argc, char** argv) {
     try {
+        std::cout << "X-Trader Seastar Trading Engine v"
+                  << seastar::xtrader::get_full_version() << '\n';
         if (argc == 2 && std::string(argv[1]) == "--help") {
             std::cout << "xtrader_market_config --new-key KEY_FILE\n"
                          "xtrader_market_config --create ENCRYPTED_CONFIG KEY_FILE\n"

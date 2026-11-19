@@ -17,6 +17,8 @@ fi
 run_and_log "05_build_debug_lowmem" bash -c '
   cd /root/seastar
   ninja -C build/debug -j"'"${JOBS}"'" app_xtrader_cli
+  mkdir -p build/debug-build-info
+  scripts/update_xtrader_build_info.sh debug build/debug/apps/xtrader build/debug-build-info
 '
 
 step_ok "05 完成：低内存编译结束。"

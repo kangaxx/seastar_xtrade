@@ -19,6 +19,9 @@ fi
 cmake -S . -B build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ninja -C build/debug -j"${JOBS}" app_xtrader_cli
 
+"${ROOT_DIR}/scripts/update_xtrader_build_info.sh" \
+	debug "${ROOT_DIR}/build/debug/apps/xtrader" "${ROOT_DIR}/build/debug-build-info"
+
 BIN_PATH="$ROOT_DIR/build/debug/apps/xtrader/xtrader_cli"
 LAUNCHER_PATH="$ROOT_DIR/build/debug/apps/xtrader/run_xtrader_cli.sh"
 

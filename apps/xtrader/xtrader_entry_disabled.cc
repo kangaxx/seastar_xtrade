@@ -17,6 +17,7 @@
  */
 #include <iostream>
 #include <string_view>
+#include <seastar/xtrader/version.hh>
 
 #ifndef XTRADER_ENTRY_NAME
 #error "XTRADER_ENTRY_NAME must identify the independently built entry point"
@@ -25,6 +26,8 @@
 // B1: these separate binaries cannot load configuration or connect to a broker.
 // Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
 int main(int argc, char** argv) {
+    std::cout << "X-Trader Seastar Trading Engine v"
+              << seastar::xtrader::get_full_version() << '\n';
     if (argc == 2 && (std::string_view(argv[1]) == "--help" ||
                       std::string_view(argv[1]) == "-h")) {
         std::cout << XTRADER_ENTRY_NAME << " (NOT OPERATIONAL)\n"

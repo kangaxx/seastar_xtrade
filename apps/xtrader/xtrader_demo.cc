@@ -29,7 +29,7 @@ int main(int ac, char** av) {
     // 打印版本信息
     std::cout << "========================================" << std::endl;
     std::cout << "X-Trader Seastar Trading Engine v"
-              << xtrader::version << std::endl;
+              << xtrader::get_full_version() << std::endl;
     std::cout << "Build: " << xtrader::build_type
               << " | Git: " << xtrader::git_commit << std::endl;
     std::cout << "========================================" << std::endl;

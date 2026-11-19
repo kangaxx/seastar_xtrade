@@ -113,6 +113,10 @@ if [ ${NINJA_EXIT} -ne 0 ]; then
     exit 1
 fi
 
+"${ROOT_DIR}/scripts/update_xtrader_build_info.sh" \
+	release "${ROOT_DIR}/build/release/apps/xtrader" "${ROOT_DIR}/build/release-build-info" \
+	| tee -a "${LOG_FILE}"
+
 echo "" | tee -a "${LOG_FILE}"
 echo "Ninja build completed successfully" | tee -a "${LOG_FILE}"
 echo "Build duration: ${BUILD_DURATION} seconds" | tee -a "${LOG_FILE}"
