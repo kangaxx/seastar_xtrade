@@ -155,7 +155,7 @@ void show_config_info(const seastar::xtrader::market_data_paths& paths,
     std::cout << "Build:      " << seastar::xtrader::build_type << std::endl;
     std::cout << "Git Commit: " << seastar::xtrader::git_commit << std::endl;
     std::cout << "Git Branch: " << seastar::xtrader::git_branch << std::endl;
-    std::cout << "Build Time: " << seastar::xtrader::build_timestamp << std::endl;
+    std::cout << "Build Time: " << seastar::xtrader::get_runtime_build_info().timestamp << std::endl;
     std::cout << "========================================" << std::endl;
 
     const auto root = config_root();

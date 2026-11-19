@@ -17,9 +17,8 @@ else()
     set(GIT_BRANCH "unknown")
 endif()
 
-string(TIMESTAMP BUILD_TIMESTAMP "%Y-%m-%d %H:%M:%S" UTC)
-
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" XTRADER_STATIC_VERSION LIMIT_COUNT 1)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 if(NOT XTRADER_STATIC_VERSION MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$")
     message(FATAL_ERROR "Invalid apps/xtrader/VERSION: ${XTRADER_STATIC_VERSION}")
 endif()
@@ -27,9 +26,11 @@ set(XTRADER_VERSION_MAJOR "${CMAKE_MATCH_1}")
 set(XTRADER_VERSION_MINOR "${CMAKE_MATCH_2}")
 set(XTRADER_VERSION_FEATURE "${CMAKE_MATCH_3}")
 
+set(XTRADER_VERSION_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+include_directories(BEFORE "${XTRADER_VERSION_INCLUDE_DIR}")
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/version.hh.in
-    ${CMAKE_SOURCE_DIR}/include/seastar/xtrader/version.hh
+    ${XTRADER_VERSION_INCLUDE_DIR}/seastar/xtrader/version.hh
     @ONLY)
 
 seastar_add_app(xtrader_demo SOURCES

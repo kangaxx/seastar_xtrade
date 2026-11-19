@@ -93,6 +93,23 @@ Release 完整日志保存在 `build/logs/build_xtrader_demo_release_*.log`。
 构建命令或日志写入失败均返回非零，不将日志管道错误当作成功。
 依赖准备要求与 Debug 相同；检测到 Conda 时只给出警告，不自动退出或清理环境。
 
+### 3.5 启动版本和编译序号
+
+静态版本由 `apps/xtrader/VERSION` 维护，当前为 `0.1.3`。成功编译后，
+构建脚本通过 Bash 调用 `scripts/update_xtrader_build_info.sh`，自动幂等创建
+`build/debug-build-info/` 或 `build/release-build-info/`，两个模式分别计数。
+记录文件为 `xtrader-build-info.txt`，保存当前序号、产物聚合 SHA-256 和最近 500 条历史。
+产物内容或文件清单变化时序号递增；未变化时不递增。
+摘要不包含 build-info、CMake 内部文件或日志。编译序号和构建时间不嵌入二进制，避免自身变化触发递增。
+
+版本头由 CMake 分别生成到 `build/<mode>/apps/xtrader/generated/seastar/xtrader/version.hh`，
+不写回源码目录；独立工具无需链接 Seastar 即可显示版本。
+启动时根据真实可执行文件路径读取对应记录，显示如 `0.1.3.2.debug`；
+`RelWithDebInfo` 和 `MinSizeRel` 归为 `release`。缺少或不匹配的记录会明确警告并显示 `unknown` 序号。
+复制部署时需要保留对应的模式目录和同级 build-info 目录；仅复制单个程序不能保留完整构建版本。
+版本机制的离线回归可运行 `python3 tests/unit/xtrader_build_info_test.py`，
+覆盖独立头文件编译、目录幂等创建、产物变化、模式隔离及 500 条历史上限。
+
 ## 4. 运行方法
 
 ### 4.1 CLI 入口（推荐先测）

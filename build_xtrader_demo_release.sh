@@ -139,7 +139,7 @@ run_step "Build xtrader applications, B5-B8 components and offline metrics probe
 		app_xtrader_replay app_xtrader_paper app_xtrader_ctp_sim app_xtrader_live \
 		app_xtrader_phase6_probe app_xtrader_market_capture app_xtrader_market_config
 
-"${ROOT_DIR}/scripts/update_xtrader_build_info.sh" \
+bash "${ROOT_DIR}/scripts/update_xtrader_build_info.sh" \
 	release "${ROOT_DIR}/build/release/apps/xtrader" "${ROOT_DIR}/build/release-build-info" \
 	| tee -a "${LOG_FILE}"
 

@@ -17,16 +17,15 @@
  */
 #pragma once
 
-#include <seastar/core/sstring.hh>
-
 #include <cctype>
-#include <cstdlib>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <sstream>
+#include <stdexcept>
 #include <string>
-#include <unistd.h>
+#include <system_error>
+#include <utility>
 
 namespace seastar::xtrader {
 
@@ -46,7 +45,6 @@ inline constexpr const char* version_patch = "@XTRADER_VERSION_FEATURE@";
 inline constexpr const char* build_type = "@CMAKE_BUILD_TYPE@";
 inline constexpr const char* git_commit = "@GIT_COMMIT_HASH@";
 inline constexpr const char* git_branch = "@GIT_BRANCH@";
-inline constexpr const char* build_timestamp = "@BUILD_TIMESTAMP@";
 
 // ============================================================
 // 功能特性开关
@@ -61,14 +59,14 @@ inline constexpr bool enable_data_import = true;
 // 系统限制配置
 // ============================================================
 
-inline constexpr size_t max_instruments = 10000;
-inline constexpr size_t max_positions = 1000;
+inline constexpr std::size_t max_instruments = 10000;
+inline constexpr std::size_t max_positions = 1000;
 inline constexpr unsigned default_account_shard = 1;
 inline constexpr unsigned default_gateway_shard = 0;
-inline constexpr size_t md_ring_buffer_capacity = 65536;
-inline constexpr size_t trader_ring_buffer_capacity = 16384;
-inline constexpr size_t max_drain_per_tick = 1024;
-inline constexpr size_t max_drain_us = 500;
+inline constexpr std::size_t md_ring_buffer_capacity = 65536;
+inline constexpr std::size_t trader_ring_buffer_capacity = 16384;
+inline constexpr std::size_t max_drain_per_tick = 1024;
+inline constexpr std::size_t max_drain_us = 500;
 
 // ============================================================
 // 应用程序信息
@@ -86,49 +84,82 @@ inline std::string get_build_variant() {
     for (char& ch : variant) {
         ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     }
+    if (variant == "relwithdebinfo" || variant == "minsizerel") { return "release"; }
     return variant == "debug" || variant == "release" ? variant : "unknown";
 }
 
 inline std::filesystem::path get_build_info_file() {
     std::error_code error;
     const auto executable = std::filesystem::canonical("/proc/self/exe", error);
-    if (error) { return {}; }
-    for (auto directory = executable.parent_path(); !directory.empty(); directory = directory.parent_path()) {
+    if (error) { throw std::system_error(error, "resolve executable for build information"); }
+    for (auto directory = executable.parent_path(); !directory.empty();) {
         const auto name = directory.filename().string();
         if (name == "debug" || name == "release") {
             return directory.parent_path() / (name + "-build-info") / "xtrader-build-info.txt";
         }
+        const auto parent = directory.parent_path();
+        if (parent == directory) { break; }
+        directory = parent;
     }
-    return {};
+    throw std::runtime_error("executable is not inside a debug or release build directory");
 }
 
-inline sstring get_full_version() {
-    std::string serial = "0";
-    const auto info_file = get_build_info_file();
-    std::ifstream input(info_file);
-    if (input) {
-        std::string line;
-        bool in_history = false;
-        while (std::getline(input, line)) {
-            if (line == "[history]") { in_history = true; continue; }
-            if (!in_history && line.starts_with("current_serial=")) {
-                serial = line.substr(std::string("current_serial=").size());
-                break;
+struct runtime_build_info {
+    std::string serial = "unknown";
+    std::string timestamp = "unknown";
+};
+
+inline const runtime_build_info& get_runtime_build_info() {
+    static const auto info = [] {
+        runtime_build_info result;
+        try {
+            const auto info_file = get_build_info_file();
+            std::ifstream input(info_file);
+            if (!input) { throw std::runtime_error("cannot read " + info_file.string()); }
+            std::string line;
+            bool in_history = false;
+            std::string recorded_version;
+            std::string recorded_variant;
+            std::string serial;
+            while (std::getline(input, line)) {
+                if (line == "[history]") { in_history = true; continue; }
+                if (!in_history) {
+                    if (line.starts_with("current_serial=")) { serial = line.substr(15); }
+                    if (line.starts_with("static_version=")) { recorded_version = line.substr(15); }
+                    if (line.starts_with("variant=")) { recorded_variant = line.substr(8); }
+                } else if (line.starts_with(serial + "\t")) {
+                    const auto separator = line.find('\t', serial.size() + 1);
+                    if (separator != std::string::npos) { result.timestamp = line.substr(separator + 1); }
+                }
             }
+            if (input.bad() || recorded_version != version || recorded_variant != get_build_variant()
+                    || serial.empty() || serial.find_first_not_of("0123456789") != std::string::npos
+                    || serial.find_first_not_of('0') == std::string::npos || result.timestamp == "unknown") {
+                throw std::runtime_error("invalid or mismatched build information in " + info_file.string());
+            }
+            result.serial = std::move(serial);
+        } catch (const std::exception& error) {
+            std::cerr << "[WARN] Build information unavailable: " << error.what() << '\n';
+            return runtime_build_info{};
         }
-    }
-    return sstring(version) + "." + serial + "." + get_build_variant();
+        return result;
+    }();
+    return info;
 }
 
-inline sstring get_version_string() {
-    return sstring("xtrader ") + get_full_version();
+inline std::string get_full_version() {
+    return std::string(version) + "." + get_runtime_build_info().serial + "." + get_build_variant();
 }
 
-inline sstring get_build_info() {
-    return sstring("Build: ") + build_type + 
+inline std::string get_version_string() {
+    return "xtrader " + get_full_version();
+}
+
+inline std::string get_build_info() {
+    return std::string("Build: ") + build_type +
            " | Git: " + git_commit + 
            " | Branch: " + git_branch +
-           " | Timestamp: " + build_timestamp;
+           " | Timestamp: " + get_runtime_build_info().timestamp;
 }
 
 inline void print_version() {
@@ -148,7 +179,7 @@ inline void print_version_detailed() {
     std::cout << "Build Type: " << build_type << std::endl;
     std::cout << "Git Commit: " << git_commit << std::endl;
     std::cout << "Git Branch: " << git_branch << std::endl;
-    std::cout << "Timestamp:  " << build_timestamp << std::endl;
+    std::cout << "Timestamp:  " << get_runtime_build_info().timestamp << std::endl;
     std::cout << "============================================" << std::endl;
     std::cout << "Features:" << std::endl;
     std::cout << "  CTP Trading:    " << (enable_ctp_trading ? "enabled" : "disabled") << std::endl;
