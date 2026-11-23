@@ -35,7 +35,7 @@ struct backtest_selection {
 };
 
 inline std::string backtest_placeholder_result() {
-    return "施工中";
+    return ui_text("Under construction", "施工中");
 }
 
 namespace backtest_menu_detail {
@@ -52,13 +52,15 @@ inline std::vector<std::size_t> parse_numbers(const std::string& line,
         if (result.ec != std::errc{} || result.ptr != line.data() + begin + length ||
             value == 0 || value > count ||
             std::find(numbers.begin(), numbers.end(), value - 1) != numbers.end()) {
-            throw std::invalid_argument("select distinct listed numbers");
+            throw std::invalid_argument(ui_text("select distinct listed numbers", "请选择列表中不重复的编号"));
         }
         numbers.push_back(value - 1);
         begin = end == std::string::npos ? end : line.find_first_not_of(" ,\t\r", end);
     }
     if (numbers.empty() || (!multiple && numbers.size() != 1)) {
-        throw std::invalid_argument(multiple ? "select at least one file" : "select exactly one item");
+        throw std::invalid_argument(multiple
+            ? ui_text("select at least one file", "请至少选择一个文件")
+            : ui_text("select exactly one item", "请只选择一项"));
     }
     return numbers;
 }
@@ -68,19 +70,20 @@ inline std::optional<std::vector<std::size_t>> choose(
         std::istream& input, std::ostream& output, std::ostream& errors) {
     output << '\n' << title << '\n';
     if (labels.empty()) {
-        output << "[WARN] No matching data files found.\n";
+        output << ui_text("[WARN] No matching data files found.\n", "[WARN] 未找到匹配的数据文件。\n");
         return std::nullopt;
     }
     for (std::size_t index = 0; index < labels.size(); ++index) {
         output << "  " << index + 1 << ") " << labels[index] << '\n';
     }
-    output << "  u) Back (Enter keeps the current selection)\n";
+    output << ui_text("  u) Back (Enter keeps the current selection)\n", "  u) 返回（回车保持当前选择）\n");
     if (multiple) {
-        output << "Select one or more file numbers, separated by spaces or commas.\n";
+        output << ui_text("Select one or more file numbers, separated by spaces or commas.\n",
+                          "请选择一个或多个文件编号，以空格或逗号分隔。\n");
     }
     std::string line;
     while (true) {
-        output << "Select: " << std::flush;
+        output << ui_text("Select: ", "选择：") << std::flush;
         if (!std::getline(input, line) || line.empty() || line == "u" || line == "back") {
             return std::nullopt;
         }
@@ -95,7 +98,8 @@ inline std::optional<std::vector<std::size_t>> choose(
 inline void require_source(const market_data_paths& paths, const backtest_selection& selection) {
     const auto sources = paths.source_directories();
     if (std::find(sources.begin(), sources.end(), selection.data_root) == sources.end()) {
-        throw std::invalid_argument("selected data source is missing or is not a direct real directory");
+        throw std::invalid_argument(ui_text("selected data source is missing or is not a direct real directory",
+                                           "所选数据来源不存在，或不是实际的一级目录"));
     }
 }
 
@@ -110,7 +114,8 @@ inline bool is_data_file(const std::filesystem::path& path) {
 
 inline std::vector<std::filesystem::path> data_files_in(const std::filesystem::path& directory) {
     if (!std::filesystem::is_directory(std::filesystem::symlink_status(directory))) {
-        throw std::invalid_argument("selected data directory is missing or is a link");
+        throw std::invalid_argument(ui_text("selected data directory is missing or is a link",
+                                           "所选数据目录不存在或是符号链接"));
     }
     std::vector<std::filesystem::path> files;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(directory)) {
@@ -132,11 +137,11 @@ inline void select_product(const market_data_paths& paths, backtest_selection& s
         }
     }
     std::sort(directories.begin(), directories.end());
-    std::vector<std::string> labels{"All product types (no directory filter)"};
+    std::vector<std::string> labels{ui_text("All product types (no directory filter)", "全部产品类型（不按目录筛选）")};
     for (const auto& directory : directories) {
         labels.push_back(directory.filename().string());
     }
-    const auto choice = choose("[Product Types / Directories]", labels, false, input, output, errors);
+    const auto choice = choose(ui_text("[Product Types / Directories]", "[产品类型 / 目录]"), labels, false, input, output, errors);
     if (!choice) {
         return;
     }
@@ -145,7 +150,8 @@ inline void select_product(const market_data_paths& paths, backtest_selection& s
     auto files = data_files_in(directory.empty() ? selection.data_root : directory);
     selection.product_directory = directory;
     selection.data_files = std::move(files);
-    output << "[OK] Product selection includes " << selection.data_files.size() << " data file(s).\n";
+    output << ui_text("[OK] Product selection includes ", "[OK] 所选产品包含 ") << selection.data_files.size()
+           << ui_text(" data file(s).\n", " 个数据文件。\n");
 }
 
 inline void select_files(const market_data_paths& paths, backtest_selection& selection,
@@ -158,7 +164,7 @@ inline void select_files(const market_data_paths& paths, backtest_selection& sel
     for (const auto& file : files) {
         labels.push_back(file.lexically_relative(selection.data_root).generic_string());
     }
-    const auto choices = choose("[Data Files]", labels, true, input, output, errors);
+    const auto choices = choose(ui_text("[Data Files]", "[数据文件]"), labels, true, input, output, errors);
     if (!choices) {
         return;
     }
@@ -167,12 +173,14 @@ inline void select_files(const market_data_paths& paths, backtest_selection& sel
         selected.push_back(files[index]);
     }
     selection.data_files = std::move(selected);
-    output << "[OK] Selected " << selection.data_files.size() << " data file(s).\n";
+    output << ui_text("[OK] Selected ", "[OK] 已选择 ") << selection.data_files.size()
+           << ui_text(" data file(s).\n", " 个数据文件。\n");
 }
 
 inline void select_strategy(backtest_selection& selection, std::istream& input,
                             std::ostream& output, std::ostream& errors) {
-    if (choose("[Strategies]", {"Virtual (placeholder; no trading logic)"}, false,
+    if (choose(ui_text("[Strategies]", "[策略]"),
+               {ui_text("Virtual (placeholder; no trading logic)", "Virtual（占位项，无交易逻辑）")}, false,
                input, output, errors)) {
         selection.strategy_id = "Virtual";
     }
@@ -181,11 +189,13 @@ inline void select_strategy(backtest_selection& selection, std::istream& input,
 inline void require_ready(const market_data_paths& paths, const backtest_selection& selection) {
     require_source(paths, selection);
     if (selection.data_files.empty() || selection.strategy_id != "Virtual") {
-        throw std::invalid_argument("select data files and the Virtual strategy before Run");
+        throw std::invalid_argument(ui_text("select data files and the Virtual strategy before Run",
+                                           "运行前请先选择数据文件和 Virtual 策略"));
     }
     for (const auto& file : selection.data_files) {
         if (!std::filesystem::is_regular_file(std::filesystem::symlink_status(file))) {
-            throw std::invalid_argument("a selected data file is missing or is a link");
+            throw std::invalid_argument(ui_text("a selected data file is missing or is a link",
+                                               "所选数据文件不存在或是符号链接"));
         }
     }
 }
@@ -201,13 +211,17 @@ inline void run_backtest_menu(const market_data_paths& paths, std::istream& inpu
     backtest_selection selection{paths.source_root(), {}, {}, {}};
     std::string line;
     while (true) {
-        output << "\n[Backtest Setup - execution under construction]\nData root: "
-               << selection.data_root.string() << "\nProduct type: "
-               << (selection.product_directory.empty() ? "(all)" : selection.product_directory.filename().string())
-               << "\nFiles: " << selection.data_files.size()
-               << "\nStrategy: " << (selection.strategy_id.empty() ? "(not selected)" : selection.strategy_id)
-               << "\n1) Select data source\n2) Select product type\n3) Select data files\n"
-                  "4) Select strategy\n5) Run (under construction)\nu) Back\nSelect: " << std::flush;
+        output << ui_text("\n[Backtest Setup - execution under construction]\nData root: ",
+                          "\n[回测设置 - 执行功能尚未完成]\n数据目录：")
+               << selection.data_root.string() << ui_text("\nProduct type: ", "\n产品类型：")
+               << (selection.product_directory.empty() ? ui_text("(all)", "（全部）") : selection.product_directory.filename().string())
+               << ui_text("\nFiles: ", "\n文件数：") << selection.data_files.size()
+               << ui_text("\nStrategy: ", "\n策略：")
+               << (selection.strategy_id.empty() ? ui_text("(not selected)", "（未选择）") : selection.strategy_id)
+               << ui_text("\n1) Select data source\n2) Select product type\n3) Select data files\n"
+                          "4) Select strategy\n5) Run (under construction)\nu) Back\nSelect: ",
+                          "\n1) 选择数据来源\n2) 选择产品类型\n3) 选择数据文件\n"
+                          "4) 选择策略\n5) 运行（尚未完成）\nu) 返回\n选择：") << std::flush;
         if (!std::getline(input, line) || line == "u" || line == "back") {
             return;
         }
@@ -227,12 +241,12 @@ inline void run_backtest_menu(const market_data_paths& paths, std::istream& inpu
                 backtest_menu_detail::select_strategy(selection, input, output, errors);
             } else if (line == "5") {
                 backtest_menu_detail::require_ready(paths, selection);
-                output << "[Backtest Run]\n" << run(selection) << '\n';
+                output << ui_text("[Backtest Run]\n", "[回测运行]\n") << run(selection) << '\n';
             } else {
-                errors << "[ERROR] Unknown backtest menu option.\n";
+                errors << ui_text("[ERROR] Unknown backtest menu option.\n", "[ERROR] 无效的回测菜单选项。\n");
             }
         } catch (const std::filesystem::filesystem_error& error) {
-            errors << "[ERROR] Cannot access backtest data: " << error.what() << '\n';
+            errors << ui_text("[ERROR] Cannot access backtest data: ", "[ERROR] 无法访问回测数据：") << error.what() << '\n';
         } catch (const std::invalid_argument& error) {
             errors << "[ERROR] " << error.what() << '\n';
         }

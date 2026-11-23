@@ -153,6 +153,27 @@ void ready(market_capture_session& session) {
     require(session.is_ready(), "all configured subscriptions acknowledged");
 }
 
+void test_bilingual_login_menu() {
+    auto account = config();
+    account.password = " English password with spaces ";
+    cli::set_ui_language(cli::ui_language::chinese);
+    std::istringstream input("SHOW\nu\n");
+    std::ostringstream output;
+    require(!cli::run_market_login_menu(account, input, output, true),
+        "SHOW and u retain their non-connecting behavior in Chinese");
+    require(output.str().find("CTP 账号操作") != std::string::npos
+        && output.str().find("终端回滚") != std::string::npos
+        && output.str().find("\" English password with spaces \"") != std::string::npos,
+        "Chinese review localizes warnings but preserves credential bytes");
+    const char* language = std::getenv("XTRADER_LANGUAGE");
+    require(language != nullptr && std::string(language) == "zh", "worker language is exported for sibling launch");
+    std::istringstream start("START\n");
+    std::ostringstream start_output;
+    require(cli::run_market_login_menu(account, start, start_output, true), "START remains valid in Chinese");
+    require(start_output.str().find(account.password) == std::string::npos, "language selection does not reveal passwords automatically");
+    cli::set_ui_language(cli::ui_language::english);
+}
+
 void test_login_review() {
     auto account = config();
     account.password = " market-password ";
@@ -257,6 +278,70 @@ void test_market_status(const fs::path& root) {
     require(has_state("[MARKET] subscribed;"), "ready status still requires all subscription acknowledgements");
     session.stop();
     require(has_state("[MARKET] stopped;"), "stopped status cannot be mistaken for a new connection attempt");
+}
+
+void test_startup_data_directories(const fs::path& root) {
+    fs::create_directories(root);
+    const market_data_paths paths(root / "data");
+    fake_md_api api;
+    market_capture_session session(config(), paths, root / "state1",
+        [&api] (const char*) { return &api; });
+    ready(session);
+    require(fs::is_directory(paths.root()) && fs::is_directory(paths.source_root()),
+        "startup creates the missing data root and capture source before connecting");
+    for (const auto& directory : {paths.root(), paths.source_root()}) {
+        struct stat status{};
+        require(::stat(directory.c_str(), &status) == 0 && (status.st_mode & 0007) == 0,
+            "new data directories do not grant permissions to other users");
+    }
+    api.send(tick());
+    session.poll_for(std::chrono::milliseconds(0));
+    session.stop();
+    const auto file = paths.data_file(
+        {"x_trader_data", "futures", "SHFE", "rb2701", "tick"}, "20261113");
+    const auto saved = read(file);
+    require(::chmod(paths.root().c_str(), 0755) == 0
+        && ::chmod(paths.source_root().c_str(), 0700) == 0, "set existing directory permissions");
+    fake_md_api next_api;
+    market_capture_session restarted(config(), paths, root / "state2",
+        [&next_api] (const char*) { return &next_api; });
+    ready(restarted);
+    restarted.stop();
+    struct stat root_status{};
+    struct stat source_status{};
+    require(::stat(paths.root().c_str(), &root_status) == 0
+        && ::stat(paths.source_root().c_str(), &source_status) == 0
+        && (root_status.st_mode & 0777) == 0755 && (source_status.st_mode & 0777) == 0700
+        && read(file) == saved, "repeated startup preserves existing permissions and Tick files");
+}
+
+void test_startup_directory_failures(const fs::path& root) {
+    fs::create_directories(root);
+    for (const bool blocked_source : {false, true}) {
+        const market_data_paths paths(root / (blocked_source ? "source_file" : "root_file"));
+        if (blocked_source) { fs::create_directories(paths.root()); }
+        const auto blocked = blocked_source ? paths.source_root() : paths.root();
+        replace(blocked, "keep existing file\n");
+        unsigned api_creations = 0;
+        fake_md_api api;
+        market_capture_session session(config(), paths, root / "state",
+            [&] (const char*) { ++api_creations; return &api; });
+        require_failure([&] { session.start(); }, "a file occupying a data directory cannot be overwritten");
+        require(api_creations == 0 && read(blocked) == "keep existing file\n" && !fs::exists(root / "state"),
+            "invalid data directories fail before SDK creation or state-directory creation");
+    }
+    const market_data_paths paths(root / "linked_source");
+    const auto outside = root / "outside";
+    fs::create_directories(paths.root());
+    fs::create_directories(outside);
+    fs::create_directory_symlink(outside, paths.source_root());
+    unsigned api_creations = 0;
+    fake_md_api api;
+    market_capture_session session(config(), paths, root / "state",
+        [&] (const char*) { ++api_creations; return &api; });
+    require_failure([&] { session.start(); }, "a linked source cannot redirect directory provisioning");
+    require(api_creations == 0 && fs::is_empty(outside),
+        "source redirection is rejected without creating files outside the source or connecting CTP");
 }
 
 void test_authenticated_config(const fs::path& root) {
@@ -765,9 +850,13 @@ int main() {
     if (!created) { std::cerr << "cannot create offline test fixture\n"; return 1; }
     const fs::path root(created);
     try {
+        cli::set_ui_language(cli::ui_language::english);
+        test_bilingual_login_menu();
         test_login_review();
         test_login_review_cancellation();
         test_market_status(root / "status");
+        test_startup_data_directories(root / "startup_directories");
+        test_startup_directory_failures(root / "startup_directory_failures");
         test_authenticated_config(root / "crypto");
         test_configuration_initialization(root / "initialization");
         test_legacy_import(root / "legacy");

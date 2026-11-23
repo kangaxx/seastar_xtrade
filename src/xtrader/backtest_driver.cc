@@ -375,7 +375,8 @@ void backtest_driver::load_historical_data(const sstring& instrument_id) {
 
     const auto instrument_key = to_lower_copy(instrument_id);
     const auto exchange_key = to_lower_copy(_cfg.dataset_exchange);
-    const auto timeframe_key = to_lower_copy(_cfg.dataset_timeframe);
+    const auto timeframe_key = _cfg.dataset_timeframe.empty() ? sstring{}
+        : sstring{market_data_paths::normalize_timeframe(std::string(to_lower_copy(_cfg.dataset_timeframe)))};
     const dataset_manifest* selected = nullptr;
     for (const auto& dataset : datasets) {
         if (to_lower_copy(dataset.symbol) != instrument_key ||
@@ -394,6 +395,9 @@ void backtest_driver::load_historical_data(const sstring& instrument_id) {
     if (selected->exchange.empty() || selected->timeframe.empty()) {
         throw std::runtime_error("historical dataset is missing exchange or timeframe");
     }
+    if (selected->layout_version == 2 && selected->asset_class != "futures") {
+        throw std::runtime_error("the futures backtest loader cannot consume a non-futures dataset");
+    }
     if (to_lower_copy(selected->timeframe) == "tick") {
         throw std::runtime_error("historical tick datasets are not supported by the bar loader");
     }
@@ -411,7 +415,7 @@ void backtest_driver::load_historical_data(const sstring& instrument_id) {
         if (!timestamp_nanos ||
             bar.volume > std::numeric_limits<int>::max() || std::trunc(bar.volume) != bar.volume) {
             throw std::runtime_error("invalid historical bar at line " + std::to_string(bar.source_line)
-                + " in " + selected->active_file_path.generic_string());
+                + " in " + (bar.source_file.empty() ? selected->active_file_path : bar.source_file).generic_string());
         }
         records.emplace_back(replay_record{
             .type = market_event_type::bar,

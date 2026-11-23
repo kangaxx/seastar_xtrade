@@ -17,7 +17,7 @@
  */
 #pragma once
 
-#include <seastar/core/sstring.hh>
+#include <seastar/xtrader/market_data_writer.hh>
 
 #include <cstddef>
 #include <filesystem>
@@ -36,6 +36,7 @@ struct historical_bar {
     double close = 0.0;
     double volume = 0.0;
     double open_interest = 0.0;
+    std::filesystem::path source_file;
 };
 
 enum class data_domain {
@@ -66,6 +67,10 @@ struct dataset_manifest {
     std::string exchange;
     std::string timeframe;
     std::string source;
+    std::string asset_class;
+    market_data_kind kind = market_data_kind::bar;
+    unsigned layout_version = 1;
+    std::vector<std::filesystem::path> files;
     data_domain domain = data_domain::raw;
     std::string active_file;
     std::filesystem::path active_file_path;
@@ -85,7 +90,7 @@ enum class historical_load_mode {
 
 class historical_data_manager {
 public:
-    explicit historical_data_manager(std::filesystem::path data_root = "/data/x_trader_data");
+    explicit historical_data_manager(std::filesystem::path data_root = market_data_paths{}.source_root());
 
     [[nodiscard]] const std::filesystem::path& data_root() const noexcept;
 
@@ -102,6 +107,12 @@ public:
         std::vector<historical_bar>& bars,
         std::string* warning = nullptr,
         historical_load_mode mode = historical_load_mode::permissive) const;
+    // Raw Tick cells use market_csv_header(tick)'s column order, without inventing
+    // trading calendars or confusing cumulative CTP volume with bar volume.
+    [[nodiscard]] bool load_ticks(
+        const dataset_manifest& dataset,
+        std::vector<market_csv_row>& ticks,
+        std::string* warning = nullptr) const;
 
 private:
     static bool load_key_value_file(

@@ -125,8 +125,53 @@ std::filesystem::path market_data_paths::dataset_directory(const market_data_key
     validate_component(key.asset_class, "asset class");
     validate_component(key.exchange, "exchange");
     validate_component(key.instrument, "instrument");
-    validate_component(key.timeframe, "timeframe");
-    return source / key.asset_class / key.exchange / key.instrument / key.timeframe;
+    return source / key.asset_class / key.exchange / key.instrument / normalize_timeframe(key.timeframe);
+}
+
+std::string market_data_paths::normalize_timeframe(const std::string& timeframe) {
+    if (timeframe == "tick" || timeframe == "native") {
+        return timeframe;
+    }
+    const auto unit = timeframe.find_first_not_of("0123456789");
+    if (unit == 0 || unit == std::string::npos || timeframe.front() == '0') {
+        throw std::invalid_argument("timeframe must be tick, native, or a positive interval such as 5s/4h/2d/1week");
+    }
+    auto suffix = timeframe.substr(unit);
+    if (suffix == "w") {
+        suffix = "week";
+    }
+    if (suffix != "s" && suffix != "m" && suffix != "h" && suffix != "d" && suffix != "week") {
+        throw std::invalid_argument("unsupported market data timeframe unit");
+    }
+    return timeframe.substr(0, unit) + suffix;
+}
+
+// Shared daily layout inference for readers scanning either one source or the whole root.
+// Source: unified import/capture request, 2026-11-23. Signature: GitHub Copilot.
+market_data_paths market_data_paths::for_data_file(const std::filesystem::path& path,
+                                                  const std::filesystem::path& selected_root) {
+    validate_absolute_path(path);
+    auto root = path;
+    for (unsigned level = 0; level < 6; ++level) {
+        root = root.parent_path();
+    }
+    if (!selected_root.empty()) {
+        validate_absolute_path(selected_root);
+        const auto relative = path.lexically_relative(selected_root);
+        if ((root != selected_root && root != selected_root.parent_path())
+                || relative.empty() || *relative.begin() == "..") {
+            throw std::invalid_argument("daily data must use the shared layout below the selected root/source");
+        }
+    }
+    market_data_paths paths(root);
+    const auto relative = path.lexically_relative(root);
+    const auto source = relative.begin()->string();
+    if (paths._sources.find(source) == paths._sources.end()) {
+        validate_component(source, "source");
+        paths._sources.insert(source);
+    }
+    (void)paths.parse_data_file(path);
+    return paths;
 }
 
 std::filesystem::path market_data_paths::data_file(
@@ -155,6 +200,9 @@ std::vector<std::string> market_data_paths::relative_components(
     const market_data_key key{components[0], components[1], components[2],
                               components[3], components[4]};
     (void)dataset_directory(key);
+    if (normalize_timeframe(key.timeframe) != key.timeframe) {
+        throw std::invalid_argument("market data directory must use the canonical timeframe");
+    }
     return components;
 }
 
@@ -178,8 +226,22 @@ void market_data_paths::validate_filesystem_path(const std::filesystem::path& pa
     if (parts[5] != "dataset-manifest.conf") {
         (void)parse_data_file(path);
     }
-    auto prefix = _root;
-    for (const auto& part : parts) {
+    validate_contained_path(_root, path);
+}
+
+void market_data_paths::validate_contained_path(const std::filesystem::path& root,
+                                                const std::filesystem::path& path) {
+    validate_absolute_path(root);
+    validate_absolute_path(path);
+    const auto relative = path.lexically_relative(root);
+    if (relative.empty() || relative == ".") {
+        throw std::invalid_argument("market data file must be below the selected root");
+    }
+    auto prefix = root;
+    for (const auto& part : relative) {
+        if (part == "..") {
+            throw std::invalid_argument("market data file escapes the selected root");
+        }
         prefix /= part;
         std::error_code error;
         const auto status = std::filesystem::symlink_status(prefix, error);
@@ -190,8 +252,7 @@ void market_data_paths::validate_filesystem_path(const std::filesystem::path& pa
             throw std::invalid_argument("market data path contains a symlink below root");
         }
     }
-    const auto expected = std::filesystem::weakly_canonical(_root)
-        / path.lexically_normal().lexically_relative(_root);
+    const auto expected = std::filesystem::weakly_canonical(root) / relative;
     const auto resolved = std::filesystem::weakly_canonical(path);
     if (resolved != expected) {
         throw std::invalid_argument("market data path redirects below the configured root");

@@ -90,7 +90,7 @@ void test_default_multi_file_run(const market_data_paths& paths, const fixture_f
     require(selection.data_files == std::vector<fs::path>{files.second, files.first},
         "multiple actual files are transferred in requested order");
     require(selection.strategy_id == "Virtual", "Virtual placeholder strategy selected");
-    require(result.output.find("[Backtest Run]\n施工中") != std::string::npos, "Run reports construction, not success");
+    require(result.output.find("[Backtest Run]\nUnder construction") != std::string::npos, "Run reports construction, not success");
     require(result.output.find("notes.txt") == std::string::npos
         && result.output.find("csv.partial") == std::string::npos
         && result.output.find("linked.csv") == std::string::npos,
@@ -151,6 +151,33 @@ void test_empty_and_missing_sources(const fs::path& root) {
         "empty data never runs despite a selected strategy");
 }
 
+void test_language_switch(const market_data_paths& paths, const fixture_files& files) {
+    std::istringstream input("invalid\n2\n");
+    std::ostringstream output, errors;
+    cli::run_language_menu(input, output, errors);
+    require(errors.str().find("[ERROR]") != std::string::npos, "invalid language selection is reported and retried");
+    require(output.str().find("当前语言：简体中文") != std::string::npos, "Chinese choice takes effect immediately");
+    const auto chinese = run_menu(paths, "2\n3\n3\n2,1\n4\n1\n5\nu\n");
+    require(chinese.output.find("回测设置") != std::string::npos
+        && chinese.output.find("[回测运行]\n施工中") != std::string::npos,
+        "nested menus and Run placeholder follow Chinese selection");
+    require(chinese.runs.size() == 1
+        && chinese.runs.front().data_files == std::vector<fs::path>{files.second, files.first},
+        "language selection preserves file choices and numeric commands");
+    require(chinese.output.find("rb2601") != std::string::npos, "dataset identifiers are not translated");
+    for (const std::string commands : {"u\n", "\n", "", "invalid\n"}) {
+        std::istringstream cancel(commands);
+        cli::run_language_menu(cancel, output, errors);
+        require(cli::current_ui_language() == cli::ui_language::chinese,
+            "back, Enter, EOF and invalid input followed by EOF preserve the language");
+    }
+    std::istringstream english("1\n");
+    cli::run_language_menu(english, output, errors);
+    const auto restored = run_menu(paths, "u\n");
+    require(restored.output.find("[Backtest Setup") != std::string::npos
+        && restored.output.find("回测设置") == std::string::npos, "switching back restores English");
+}
+
 } // namespace
 
 int main() {
@@ -169,6 +196,7 @@ int main() {
         return 1;
     }
     try {
+        cli::set_ui_language(cli::ui_language::english);
         market_data_paths paths(fixture / "data");
         const auto files = prepare_data(paths);
         test_default_multi_file_run(paths, files);
@@ -177,6 +205,7 @@ int main() {
         test_invalid_choices_and_unconfigured_run(paths, files);
         test_source_and_product_changes(paths, files);
         test_empty_and_missing_sources(fixture / "missing_data");
+        test_language_switch(paths, files);
         fs::remove_all(fixture);
         std::cout << "backtest menu setup and placeholder cases passed\n";
         return 0;

@@ -61,5 +61,5 @@ printf '[INFO] Compiling backtest setup menu cases; Run is a construction placeh
     -o "$BACKTEST_BINARY"
 TMPDIR="$WORK_DIR" "$BACKTEST_BINARY"
 printf '[OK] Backtest source/product/files/strategy selection and placeholder Run passed.\n'
-printf '[INFO] Full CLI build is separate; import/replay/recording remain unchanged.\n'
+printf '[INFO] Full CLI build and shared storage/import/readback checks are separate.\n'
 printf '[INFO] No trading verification performed.\n'

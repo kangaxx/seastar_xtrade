@@ -125,6 +125,7 @@ void test_listing_failures(const fs::path& parent) {
 } // namespace
 
 int main() {
+    seastar::xtrader::cli::set_ui_language(seastar::xtrader::cli::ui_language::english);
     const auto parent = fs::temp_directory_path();
     const auto seed = std::chrono::steady_clock::now().time_since_epoch().count();
     fs::path fixture;

@@ -630,6 +630,7 @@ seastar_add_test (xtrader_offline_bar_strategy_replay
     ../../src/xtrader/backtest_driver.cc
     ../../src/xtrader/market_data_paths.cc
     ../../src/xtrader/historical_data_manager.cc
+    ../../src/xtrader/market_data_writer.cc
     ../../src/xtrader/position_ledger.cc
     ../../src/xtrader/offline_fund_ledger.cc
     ../../src/xtrader/offline_account_ledger.cc
@@ -753,7 +754,25 @@ target_include_directories (test_unit_xtrader_backtest_menu PRIVATE
 seastar_add_test (xtrader_historical_data_manager
   SOURCES
     xtrader_historical_data_manager_test.cc
-    ../../src/xtrader/historical_data_manager.cc)
+    ../../src/xtrader/historical_data_manager.cc
+    ../../src/xtrader/market_data_paths.cc
+    ../../src/xtrader/market_data_writer.cc)
+
+seastar_add_test (xtrader_market_storage
+  KIND CUSTOM
+  SOURCES
+    xtrader_market_storage_test.cc
+    ../../src/xtrader/data_importer.cc
+    ../../src/xtrader/historical_data_manager.cc
+    ../../src/xtrader/market_data_paths.cc
+    ../../src/xtrader/market_data_writer.cc
+    ../../src/xtrader/market_tick_writer.cc)
+target_include_directories(test_unit_xtrader_market_storage PRIVATE
+  ${Seastar_SOURCE_DIR}/include ${Seastar_SOURCE_DIR}/src/xtrader)
+target_include_directories(test_unit_xtrader_market_storage SYSTEM PRIVATE
+  ${Seastar_SOURCE_DIR}/api/ctp/v6.7.2/linux64)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+target_link_libraries(test_unit_xtrader_market_storage PRIVATE OpenSSL::Crypto)
 
 # B1: keep the runtime regression independent of CTP headers and libraries.
 # Source: user request, 2026-11-09. Signature: GitHub Copilot (Auto).
@@ -792,7 +811,8 @@ seastar_add_test (xtrader_phase4_minimal
     ../../src/xtrader/performance_metrics.cc
     ../../src/xtrader/backtest_driver.cc
     ../../src/xtrader/market_data_paths.cc
-    ../../src/xtrader/historical_data_manager.cc)
+    ../../src/xtrader/historical_data_manager.cc
+    ../../src/xtrader/market_data_writer.cc)
 
 seastar_add_test (xtrader_replay_input
   SOURCES
@@ -805,7 +825,8 @@ seastar_add_test (xtrader_replay_input
     ../../src/xtrader/performance_metrics.cc
     ../../src/xtrader/backtest_driver.cc
     ../../src/xtrader/market_data_paths.cc
-    ../../src/xtrader/historical_data_manager.cc)
+    ../../src/xtrader/historical_data_manager.cc
+    ../../src/xtrader/market_data_writer.cc)
 
 seastar_add_test (reactor_backend
   SOURCES reactor_backend_test.cc)

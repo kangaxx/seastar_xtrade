@@ -74,8 +74,9 @@ void open_market_capture_menu() {
     run_market_capture_menu(files.config, files.key, std::cin, std::cout, std::cerr,
         [] (const auto& config, const auto& key) {
             if (!::isatty(STDIN_FILENO) || !::isatty(STDOUT_FILENO)) {
-                throw std::runtime_error("account actions require an interactive terminal; no connection made. "
-                    "Use the standalone collector for non-interactive capture.");
+                throw std::runtime_error(ui_text("account actions require an interactive terminal; no connection made. "
+                    "Use the standalone collector for non-interactive capture.",
+                    "账号操作需要交互终端，未连接服务器。非交互采集请使用独立采集器。"));
             }
             return launch("xtrader_market_capture", {"--config", config.string(), "--key-file", key.string()});
         });
@@ -114,7 +115,8 @@ void open_plaintext_import_menu() {
             const auto status = launch("xtrader_market_config",
                 {"--import-plaintext", source.string(), imported.string(), files.key.string()});
             if (status != 0) {
-                throw std::runtime_error("plaintext INI import utility exited with status " + std::to_string(status));
+                throw std::runtime_error(std::string(ui_text("plaintext INI import utility exited with status ",
+                                                            "明文 INI 导入工具退出，状态码 ")) + std::to_string(status));
             }
             return imported;
         });

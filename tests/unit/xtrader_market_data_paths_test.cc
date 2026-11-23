@@ -57,6 +57,22 @@ void test_layout(const fs::path& root) {
     require(!fs::exists(root), "path construction must not create directories");
 }
 
+void test_timeframes(const fs::path& root) {
+    const market_data_paths paths(root);
+    auto key = futures_key();
+    for (const std::string timeframe : {"tick", "5s", "2h", "1d", "1week", "2d", "4h"}) {
+        key.timeframe = timeframe;
+        const auto file = paths.data_file(key, "20261123");
+        require(paths.parse_data_file(file).key.timeframe == timeframe, "explicit arbitrary timeframe round trip");
+        require(market_data_paths::for_data_file(file).root() == root, "reader layout inference uses shared class");
+    }
+    key.timeframe = "1w";
+    require(paths.data_file(key, "20261123").parent_path().filename() == "1week", "weekly alias normalization");
+    for (const char* timeframe : {"0s", "01m", "-2h", "2months", "1m/escape", ""}) {
+        require_invalid([&] { (void)market_data_paths::normalize_timeframe(timeframe); });
+    }
+}
+
 void test_invalid_inputs(const fs::path& root) {
     market_data_paths paths(root);
     const auto key = futures_key();
@@ -162,6 +178,7 @@ int main() {
         require(market_data_paths{}.root() == fs::path("/data"), "default production root");
 #endif
         test_layout(root);
+        test_timeframes(root);
         test_invalid_inputs(root);
         test_path_rejection(root);
         test_filesystem_boundaries(root);

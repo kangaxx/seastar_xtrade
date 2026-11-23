@@ -30,6 +30,7 @@ printf '[INFO] Compiling offline capture cases with OpenSSL; real CTP libraries 
     -I "$REPO_ROOT/include" -I "$REPO_ROOT/apps/xtrader" -I "$REPO_ROOT/src/xtrader" \
     -isystem "$REPO_ROOT/api/ctp/v6.7.2/linux64" \
     "$REPO_ROOT/src/xtrader/market_data_paths.cc" \
+    "$REPO_ROOT/src/xtrader/market_data_writer.cc" \
     "$REPO_ROOT/src/xtrader/market_capture_config.cc" \
     "$REPO_ROOT/src/xtrader/market_tick_writer.cc" \
     "$REPO_ROOT/src/xtrader/market_capture.cc" \

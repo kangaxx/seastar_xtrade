@@ -15,6 +15,7 @@
 #pragma once
 
 #include <seastar/xtrader/market_data_paths.hh>
+#include "cli_language.hh"
 
 #include <charconv>
 #include <cstddef>
@@ -34,29 +35,31 @@ inline bool select_data_source(const market_data_paths& paths,
     try {
         directories = paths.source_directories();
     } catch (const std::filesystem::filesystem_error& error) {
-        errors << "[ERROR] Cannot list data sources: " << error.what() << '\n';
+        errors << ui_text("[ERROR] Cannot list data sources: ", "[ERROR] 无法列出数据来源：") << error.what() << '\n';
         return false;
     }
-    output << "\n[Data Sources]\nRoot: " << paths.root().string()
-           << "\nCurrent: " << selected_root.string() << '\n';
+    output << ui_text("\n[Data Sources]\nRoot: ", "\n[数据来源]\n根目录：") << paths.root().string()
+           << ui_text("\nCurrent: ", "\n当前目录：") << selected_root.string() << '\n';
     if (directories.empty()) {
-        output << "[WARN] No data source directories found; current selection unchanged.\n";
+        output << ui_text("[WARN] No data source directories found; current selection unchanged.\n",
+                          "[WARN] 未找到数据来源目录，保持当前选择。\n");
         return false;
     }
     for (std::size_t index = 0; index < directories.size(); ++index) {
         output << "  " << index + 1 << ") " << directories[index].filename().string();
         if (directories[index] == paths.source_root()) {
-            output << " [default]";
+            output << ui_text(" [default]", " [默认]");
         }
         if (directories[index] == selected_root) {
-            output << " [selected]";
+            output << ui_text(" [selected]", " [已选]");
         }
         output << '\n';
     }
-    output << "  u) Back\nPress Enter to keep the current source.\n";
+    output << ui_text("  u) Back\nPress Enter to keep the current source.\n",
+                      "  u) 返回\n按回车保持当前数据来源。\n");
     std::string line;
     while (true) {
-        output << "Select: " << std::flush;
+        output << ui_text("Select: ", "选择：") << std::flush;
         if (!std::getline(input, line) || line.empty() ||
             line == "u" || line == "up" || line == "back") {
             return false;
@@ -65,12 +68,13 @@ inline bool select_data_source(const market_data_paths& paths,
         const auto result = std::from_chars(line.data(), line.data() + line.size(), number);
         if (result.ec != std::errc{} || result.ptr != line.data() + line.size() ||
             number == 0 || number > directories.size()) {
-            errors << "[ERROR] Select a listed directory number, or u to go back.\n";
+            errors << ui_text("[ERROR] Select a listed directory number, or u to go back.\n",
+                              "[ERROR] 请输入列表中的目录编号，或 u 返回。\n");
             continue;
         }
         selected_root = directories[number - 1];
-        output << "[OK] Data source: " << selected_root.filename().string()
-               << "\nData root: " << selected_root.string() << '\n';
+        output << ui_text("[OK] Data source: ", "[OK] 数据来源：") << selected_root.filename().string()
+               << ui_text("\nData root: ", "\n数据目录：") << selected_root.string() << '\n';
         return true;
     }
 }

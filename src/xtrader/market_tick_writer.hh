@@ -3,7 +3,7 @@
 #pragma once
 
 #include <seastar/xtrader/market_capture_config.hh>
-#include <seastar/xtrader/market_data_paths.hh>
+#include <seastar/xtrader/market_data_writer.hh>
 #include <ThostFtdcMdApi.h>
 #include "market_capture_io.hh"
 
@@ -29,16 +29,11 @@ public:
     void sync();
     void close();
 private:
-    struct output_file {
-        std::filesystem::path path;
-        file_descriptor fd;
-    };
-    output_file open_file(const std::filesystem::path& path);
     std::string row(const CThostFtdcDepthMarketDataField& tick, const std::string& exchange,
                     uint64_t sequence, int64_t received_unix_ms) const;
     market_data_paths _paths;
+    market_data_writer _writer;
     std::map<std::string, std::string> _exchanges;
-    std::map<std::string, output_file> _files;
     std::string _session_id;
 };
 

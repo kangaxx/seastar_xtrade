@@ -27,7 +27,7 @@ file (WRITE "${fixture}/not_a_directory" "fixture\n")
 
 file (SHA256 "${config_root}/a_real/xtrader.ini" before_hash)
 execute_process (
-  COMMAND "${CMAKE_COMMAND}" -E env "XTRADER_CLI_CONFIG_ROOT=${config_root}"
+  COMMAND "${CMAKE_COMMAND}" -E env "XTRADER_LANGUAGE=en" "XTRADER_CLI_CONFIG_ROOT=${config_root}"
     "${CLI}" --smp 1 --memory 512M --overprovisioned
   INPUT_FILE "${fixture}/input.txt"
   RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 30)
@@ -65,7 +65,7 @@ if (NOT before_hash STREQUAL after_hash OR EXISTS "${config_root}/guangfa01"
 endif ()
 
 execute_process (
-  COMMAND "${CMAKE_COMMAND}" -E env "XTRADER_CLI_CONFIG_ROOT=${fixture}/empty"
+  COMMAND "${CMAKE_COMMAND}" -E env "XTRADER_LANGUAGE=en" "XTRADER_CLI_CONFIG_ROOT=${fixture}/empty"
     "${CLI}" --smp 1 --memory 512M --overprovisioned
   INPUT_FILE "${fixture}/input.txt"
   RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 30)
@@ -79,7 +79,7 @@ if (empty_entries)
 endif ()
 
 execute_process (
-  COMMAND "${CMAKE_COMMAND}" -E env "XTRADER_CLI_CONFIG_ROOT=${fixture}/not_a_directory"
+  COMMAND "${CMAKE_COMMAND}" -E env "XTRADER_LANGUAGE=en" "XTRADER_CLI_CONFIG_ROOT=${fixture}/not_a_directory"
     "${CLI}" --smp 1 --memory 512M --overprovisioned
   INPUT_FILE "${fixture}/input.txt"
   RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 30)
@@ -87,6 +87,44 @@ if (NOT "${result}" STREQUAL "0" OR NOT output MATCHES "Configuration inventory 
     OR NOT error MATCHES "Configuration root is not an accessible directory"
     OR output MATCHES "no environments found")
   message (FATAL_ERROR "Invalid configuration root was not reported: ${result}\n${output}\n${error}")
+endif ()
+
+file (WRITE "${fixture}/language_input.txt" "14\n2\n3\nu\n8\nu\n9\nu\n5\n14\n1\n5\nq\n")
+execute_process (
+  COMMAND "${CMAKE_COMMAND}" -E env "XTRADER_LANGUAGE=en" "XTRADER_CLI_CONFIG_ROOT=${config_root}"
+    "XTRADER_MARKET_CONFIG=${fixture}/menu.enc" "XTRADER_MARKET_KEY_FILE=${fixture}/menu.key"
+    "${CLI}" --smp 1 --memory 512M --overprovisioned
+  INPUT_FILE "${fixture}/language_input.txt"
+  RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 30)
+if (NOT "${result}" STREQUAL "0")
+  message (FATAL_ERROR "Bilingual menus failed: ${result}\n${output}\n${error}")
+endif ()
+foreach (expected IN ITEMS "14) Language / 语言" "当前语言：简体中文" "[行情导入菜单]"
+    "[回测设置 - 执行功能尚未完成]" "[CTP 只读行情采集]" "========== 配置信息 =========="
+    "Language: English" "========== Configuration Info ==========")
+  string (FIND "${output}" "${expected}" found)
+  if (found EQUAL -1)
+    message (FATAL_ERROR "Missing bilingual menu result: ${expected}\n${output}\n${error}")
+  endif ()
+endforeach ()
+foreach (secret IN ITEMS INVESTOR_SENTINEL PASSWORD_SENTINEL BROKER_SENTINEL AUTH_SENTINEL ENCODED_SENTINEL)
+  string (FIND "${output}${error}" "${secret}" found)
+  if (NOT found EQUAL -1)
+    message (FATAL_ERROR "Language switching exposed account data")
+  endif ()
+endforeach ()
+file (SHA256 "${config_root}/a_real/xtrader.ini" language_hash)
+if (NOT before_hash STREQUAL language_hash OR EXISTS "${fixture}/menu.enc" OR EXISTS "${fixture}/menu.key")
+  message (FATAL_ERROR "Language/menu browsing modified account files")
+endif ()
+
+execute_process (
+  COMMAND "${CMAKE_COMMAND}" -E env "XTRADER_LANGUAGE=invalid" "XTRADER_CLI_CONFIG_ROOT=${config_root}"
+    "${CLI}" --smp 1 --memory 512M --overprovisioned
+  INPUT_FILE "${fixture}/input.txt"
+  RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 30)
+if (NOT "${result}" STREQUAL "2" OR NOT error MATCHES "XTRADER_LANGUAGE must be en or zh")
+  message (FATAL_ERROR "Invalid language was not rejected before startup: ${result}\n${output}\n${error}")
 endif ()
 
 file (REMOVE_RECURSE "${fixture}")

@@ -39,11 +39,16 @@ struct import_options {
     import_source_type source_type = import_source_type::taobao_csv;
     import_mode mode = import_mode::incremental;
     std::string config_path;
+    std::string destination_source;
+    std::string timeframe;
+    std::string instrument;
+    std::string exchange;
 };
 
 struct import_file_report {
     std::filesystem::path source_file;
     std::filesystem::path target_file;
+    std::vector<std::filesystem::path> target_files;
     std::string dataset_symbol;
     std::string exchange;
     std::string timeframe;

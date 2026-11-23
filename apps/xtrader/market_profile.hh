@@ -3,6 +3,7 @@
 #pragma once
 
 #include "market_capture_io.hh"
+#include "cli_language.hh"
 
 #include <algorithm>
 #include <cstdlib>
@@ -36,10 +37,11 @@ inline void validate_market_profile(const market_profile& profile) {
             || std::any_of(profile.alias.begin(), profile.alias.end(), [] (unsigned char ch) {
                 return ch < 32 || ch == 127;
             })) {
-        throw std::invalid_argument("account alias must be 1-128 UTF-8 bytes without control characters");
+        throw std::invalid_argument(ui_text("account alias must be 1-128 UTF-8 bytes without control characters",
+                                           "账号别名必须为 1-128 个 UTF-8 字节，且不含控制字符"));
     }
     if (profile.key.empty() || !profile.key.is_absolute()) {
-        throw std::invalid_argument("account profile must contain an absolute key path");
+        throw std::invalid_argument(ui_text("account profile must contain an absolute key path", "账号描述必须包含密钥的绝对路径"));
     }
 }
 
@@ -73,7 +75,7 @@ inline std::optional<market_profile> load_market_profile(const std::filesystem::
     if (!std::getline(input, format) || format != "XTM_PROFILE_1"
             || !(input >> std::quoted(profile.alias) >> std::quoted(key))
             || !(input >> std::ws).eof()) {
-        throw std::runtime_error("invalid account profile: " + path.string());
+        throw std::runtime_error(std::string(ui_text("invalid account profile: ", "账号描述文件无效：")) + path.string());
     }
     profile.key = key;
     validate_market_profile(profile);
@@ -85,7 +87,8 @@ inline void save_market_profile(const std::filesystem::path& config, market_prof
     validate_market_profile(profile);
     if (!std::filesystem::is_regular_file(config) || !std::filesystem::is_regular_file(profile.key)
             || std::filesystem::equivalent(config, profile.key)) {
-        throw std::invalid_argument("account configuration and key must be existing, separate files");
+        throw std::invalid_argument(ui_text("account configuration and key must be existing, separate files",
+                                           "账号配置和密钥必须是两个不同的已存在文件"));
     }
     const auto path = market_profile_file(config);
     (void)load_market_profile(config);
@@ -115,7 +118,7 @@ inline std::string market_profile_label(const std::filesystem::path& config, std
         const auto profile = load_market_profile(config);
         if (profile) { return profile->alias; }
     } catch (const std::exception& error) {
-        errors << "[ERROR] Cannot read alias for " << config.string() << ": " << error.what() << '\n';
+        errors << ui_text("[ERROR] Cannot read alias for ", "[ERROR] 无法读取账号别名：") << config.string() << ": " << error.what() << '\n';
     }
     return config.stem().string();
 }
@@ -127,7 +130,8 @@ inline void run_market_profile_alias_menu(
     try {
         const auto profile = load_market_profile(config);
         const auto current = profile ? profile->alias : config.stem().string();
-        output << "Account alias [" << current << "] (Enter keeps current, u skips): " << std::flush;
+        output << ui_text("Account alias [", "账号别名 [") << current
+               << ui_text("] (Enter keeps current, u skips): ", "]（回车保持当前，u 跳过）：") << std::flush;
         std::string alias;
         if (!std::getline(input, alias) || alias == "u") {
             if (!remember_import) { return; }
@@ -135,9 +139,11 @@ inline void run_market_profile_alias_menu(
         }
         if (alias.empty()) { alias = current; }
         save_market_profile(config, {std::move(alias), key});
-        output << "[OK] Account alias and matching key path saved; encrypted credentials unchanged.\n";
+        output << ui_text("[OK] Account alias and matching key path saved; encrypted credentials unchanged.\n",
+                          "[OK] 已保存账号别名和对应密钥路径，加密凭据未改变。\n");
     } catch (const std::exception& error) {
-        errors << "[ERROR] Cannot save account alias; configuration remains available at "
+        errors << ui_text("[ERROR] Cannot save account alias; configuration remains available at ",
+                          "[ERROR] 无法保存账号别名，原配置仍保存在 ")
                << config.string() << ": " << error.what() << '\n';
     }
 }

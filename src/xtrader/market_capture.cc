@@ -12,6 +12,7 @@
 #include <mutex>
 #include <set>
 #include <sstream>
+#include <system_error>
 #include <sys/file.h>
 
 namespace seastar::xtrader {
@@ -239,17 +240,30 @@ public:
 
 private:
     void prepare_state() {
-        if (::access(_paths.root().c_str(), R_OK | X_OK) != 0) {
-            detail::io_error("data root must exist and be accessible before connecting CTP");
-        }
-        const auto source = _paths.source_root();
-        const auto writable = std::filesystem::exists(source) ? source : _paths.root();
-        if (::access(writable.c_str(), W_OK | X_OK) != 0) {
-            detail::io_error("grant this user write access to /data/x_trader_data before connecting CTP");
-        }
+        // Check redirection before creating directories, so source links cannot redirect setup.
+        // Source: startup directory error, 2026-11-23. Signature: GitHub Copilot (gpt-6.1-sol).
         for (const auto& contract : _config.contracts) {
             _paths.validate_filesystem_path(_paths.data_file(
                 {"x_trader_data", "futures", contract.exchange, contract.instrument, "tick"}, "20000101"));
+        }
+        const auto source = _paths.source_root();
+        for (const auto& directory : {_paths.root(), source}) {
+            if (::mkdir(directory.c_str(), 0750) != 0 && errno != EEXIST) {
+                const auto error = errno;
+                throw std::system_error(error, std::generic_category(),
+                    "cannot create market data directory " + directory.string()
+                    + " before connecting CTP; ensure its parent exists and grant this user write access");
+            }
+        }
+        if (::access(_paths.root().c_str(), R_OK | X_OK) != 0) {
+            const auto error = errno;
+            throw std::system_error(error, std::generic_category(),
+                "data root must be readable and accessible before connecting CTP: " + _paths.root().string());
+        }
+        if (::access(source.c_str(), R_OK | W_OK | X_OK) != 0) {
+            const auto error = errno;
+            throw std::system_error(error, std::generic_category(),
+                "grant this user read/write access before connecting CTP: " + source.string());
         }
         private_directory(_state_directory);
         private_directory(_state_directory / "flow");

@@ -71,6 +71,7 @@ seastar_add_app(xtrader_demo SOURCES
     ../../src/xtrader/paper_market_session.cc
     ../../src/xtrader/recovery_coordinator.cc
     ../../src/xtrader/historical_data_manager.cc
+    ../../src/xtrader/market_data_writer.cc
     ../../src/xtrader/redis_sync_client.cc
     ../../src/xtrader/performance_metrics.cc
     ../../src/xtrader/health_check.cc)
@@ -95,6 +96,7 @@ seastar_add_app(xtrader_cli SOURCES
     market_capture_launcher.cc
     ../../src/xtrader/market_data_paths.cc
     ../../src/xtrader/data_importer.cc
+    ../../src/xtrader/market_data_writer.cc
     ../../src/xtrader/historical_data_manager.cc
     ../../src/xtrader/redis_sync_client.cc)
 
@@ -112,6 +114,7 @@ add_library(xtrader_market_capture_core STATIC
     ../../src/xtrader/market_capture_config.cc
     ../../src/xtrader/market_capture.cc
     ../../src/xtrader/market_tick_writer.cc
+    ../../src/xtrader/market_data_writer.cc
     ../../src/xtrader/market_data_paths.cc)
 target_include_directories(xtrader_market_capture_core PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_include_directories(xtrader_market_capture_core SYSTEM PRIVATE ${CTP_API_DIR})

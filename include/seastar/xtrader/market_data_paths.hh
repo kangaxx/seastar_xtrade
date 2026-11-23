@@ -55,6 +55,12 @@ public:
         const std::string& format = "csv") const;
     [[nodiscard]] std::filesystem::path manifest_file(const market_data_key& key) const;
     [[nodiscard]] market_data_file parse_data_file(const std::filesystem::path& path) const;
+    [[nodiscard]] static std::string normalize_timeframe(const std::string& timeframe);
+    [[nodiscard]] static market_data_paths for_data_file(
+        const std::filesystem::path& path, const std::filesystem::path& selected_root = {});
+    // Compatibility reads use the same root/link boundary, without imposing daily filenames.
+    static void validate_contained_path(const std::filesystem::path& root,
+                                        const std::filesystem::path& path);
 
     // Explicit blocking check for startup/worker use; not a race-free file-open API.
     // Rejects existing symlink redirection below root, including between sources.
