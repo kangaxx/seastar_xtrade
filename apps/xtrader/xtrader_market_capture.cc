@@ -81,7 +81,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string(argv[1]) == "--help") {
             std::cout << "xtrader_market_capture --config ENCRYPTED_CONFIG --key-file KEY_FILE\n"
                          "Read-only CTP MdApi collector. Enter, SIGINT or SIGTERM stops and syncs files.\n"
-                         "Before connecting, interactive terminals review account fields; SHOW reveals secrets, LOGIN confirms.\n"
+                         "Interactive account menu: 1/START connects, 2/SHOW reveals secrets without connecting, u returns.\n"
                          "Only /data/x_trader_data is used for Tick output. No trading API is linked.\n";
             return 0;
         }
@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
         install_signals();
         std::cout.exceptions(std::ios::badbit | std::ios::failbit);
         auto config = seastar::xtrader::load_market_capture_config(argv[2], argv[4]);
-        if (!seastar::xtrader::cli::confirm_market_login(config, std::cin, std::cout,
+        if (!seastar::xtrader::cli::run_market_login_menu(config, std::cin, std::cout,
                 ::isatty(STDIN_FILENO) && ::isatty(STDOUT_FILENO))) {
             return 0;
         }

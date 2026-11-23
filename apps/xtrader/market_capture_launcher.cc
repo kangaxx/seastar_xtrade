@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <system_error>
 #include <sys/wait.h>
+#include <unistd.h>
 #include <vector>
 
 extern char** environ;
@@ -72,6 +73,10 @@ void open_market_capture_menu() {
     auto& files = current_files();
     run_market_capture_menu(files.config, files.key, std::cin, std::cout, std::cerr,
         [] (const auto& config, const auto& key) {
+            if (!::isatty(STDIN_FILENO) || !::isatty(STDOUT_FILENO)) {
+                throw std::runtime_error("account actions require an interactive terminal; no connection made. "
+                    "Use the standalone collector for non-interactive capture.");
+            }
             return launch("xtrader_market_capture", {"--config", config.string(), "--key-file", key.string()});
         });
 }

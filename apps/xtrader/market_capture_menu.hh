@@ -33,7 +33,7 @@ inline void run_market_capture_menu(
                << "Encrypted config: " << config.string()
                << "\nKey file: " << key.string()
                << "\n1) Set encrypted config path\n2) Set key file path\n"
-                  "3) Start live market capture (no trading)\n"
+                  "3) Open account actions (START / SHOW; no trading)\n"
                   "4) Select imported account\n5) Set account alias\nu) Back\nSelect: " << std::flush;
         if (!std::getline(input, line) || line == "u" || line == "back") { return; }
         if (line == "1" || line == "2") {
@@ -48,17 +48,13 @@ inline void run_market_capture_menu(
         } else if (line == "3") {
             output << "Selected account: " << market_profile_label(config, errors)
                    << "\nEncrypted config: " << config.string() << "\nKey file: " << key.string()
-                   << "\nThis connects to the configured market front and writes real Tick data.\n"
-                      "The collector will show decrypted account fields before connecting; SHOW can reveal passwords.\n"
-                      "Type START to confirm (Enter cancels): " << std::flush;
-            if (!std::getline(input, line)) { return; }
-            if (line != "START") { continue; }
+                   << "\nOpening account actions; only START connects, SHOW does not.\n" << std::flush;
             try {
                 const auto status = launch(config, key);
                 if (status != 0) {
                     errors << "[ERROR] Market collector exited with status " << status << ".\n";
                 } else {
-                    output << "[STOPPED] Market collector returned; inspect its subscription and tick counts.\n";
+                    output << "[INFO] Returned to the market capture menu.\n";
                 }
             } catch (const std::exception& error) {
                 errors << "[ERROR] Cannot launch market collector: " << error.what() << '\n';
@@ -171,7 +167,7 @@ inline void select_market_config(
         output << "[OK] Account selected: " << market_profile_label(config, errors)
                << ". Menu 9 uses this configuration and key.\n"
                   "[INFO] Local account selection only; login has NOT been attempted. This is not a login failure.\n"
-                  "[INFO] Use Menu 9 -> 3 -> START to review account fields and connect.\n";
+                  "[INFO] Use Menu 9 -> 3 for START (connect) or SHOW (view account details).\n";
     } catch (const std::exception& error) {
         errors << "[ERROR] Cannot select account; current paths unchanged: " << error.what() << '\n';
     }

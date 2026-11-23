@@ -171,19 +171,21 @@ void test_login_review() {
             || text.find("offline-auth-code") != std::string::npos;
     };
     std::ostringstream output;
-    std::istringstream confirm("LOGIN\n");
-    require(cli::confirm_market_login(account, confirm, output, true),
-        "LOGIN explicitly confirms the account before connecting");
+    std::istringstream confirm("START\n");
+    require(cli::run_market_login_menu(account, confirm, output, true),
+        "START begins capture directly without a second LOGIN confirmation");
     require(!has_secrets(output.str())
-        && output.str().find("market.user_id: \"offline-user\"") != std::string::npos
-        && output.str().find("market.market_front: \"tcp://127.0.0.1:1\"") != std::string::npos
-        && output.str().find("market.broker_id: \"offline\"") != std::string::npos
-        && output.str().find("SHFE:rb2701 SHFE:ag2612") != std::string::npos,
-        "default review identifies the actual market account and subscriptions without passwords");
+        && output.str().find("UserID: \"offline-user\"") != std::string::npos
+        && output.str().find("Market front: \"tcp://127.0.0.1:1\"") != std::string::npos
+        && output.str().find("BrokerID: \"offline\"") != std::string::npos
+        && output.str().find("1) START") != std::string::npos
+        && output.str().find("2) SHOW") != std::string::npos
+        && output.str().find("market.password:") == std::string::npos,
+        "compact action menu identifies the account without requiring a full configuration review");
     output.str("");
-    std::istringstream reveal("SHOW\nLOGIN\n");
-    require(cli::confirm_market_login(account, reveal, output, true),
-        "SHOW followed by LOGIN reveals and confirms the configuration");
+    std::istringstream reveal("sHoW\nsTaRt\n");
+    require(cli::run_market_login_menu(account, reveal, output, true),
+        "SHOW returns to the same menu and START works case-insensitively");
     require(output.str().find("market.password: \" market-password \"") != std::string::npos
         && output.str().find("trader.password: \"trader-password\"") != std::string::npos
         && output.str().find("trader.auth_code: \"offline-auth-code\"") != std::string::npos
@@ -195,8 +197,8 @@ void test_login_review() {
         && output.str().find("NOT used for this login") != std::string::npos,
         "full review preserves password spaces and distinguishes stored trader fields from MD login");
     output.str("");
-    std::istringstream redirected("SHOW\nLOGIN\n");
-    require(cli::confirm_market_login(account, redirected, output, false)
+    std::istringstream redirected("SHOW\nSTART\n");
+    require(cli::run_market_login_menu(account, redirected, output, false)
         && !has_secrets(output.str()) && redirected.peek() == 'S',
         "non-terminal capture never reveals secrets or consumes commands meant for capture input");
     trader.password.clear();
@@ -211,16 +213,25 @@ void test_login_review() {
 void test_login_review_cancellation() {
     auto account = config();
     account.contracts.clear();
-    for (const auto* commands : {"\n", "u\n", "invalid\n", "", "SHOW\n", "SHOW\nu\n"}) {
+    for (const auto* commands : {"\n", "u\n", "invalid\n", "", "SHOW\n", "2\nu\n", "show\n0\n"}) {
         std::istringstream input(commands);
         std::ostringstream output;
-        require(!cli::confirm_market_login(account, input, output, true)
+        require(!cli::run_market_login_menu(account, input, output, true)
             && output.str().find("[CANCELLED]") != std::string::npos
             && output.str().find("no connection made") != std::string::npos,
-            "cancel, unknown input or EOF before/after SHOW cannot confirm a login");
-        require(output.str().find("not configured; you will be prompted before connecting") != std::string::npos
-            && output.str().find("Trader: not configured") != std::string::npos,
-            "contract-free market-only profiles can be reviewed before contract entry");
+            "SHOW, unknown input or EOF cannot start capture without an explicit START");
+        require(output.str().find("Contracts: 0 (enter contracts after START)") != std::string::npos
+            && account.contracts.empty(), "opening account actions never requires or changes contracts");
+    }
+    for (const auto* commands : {"1\n", "start\n", "2\n1\n", "invalid\nSHOW\nSTART\n"}) {
+        std::istringstream input(commands);
+        std::ostringstream output;
+        require(cli::run_market_login_menu(account, input, output, true),
+            "numbered commands and recovery after an invalid action reach START without LOGIN");
+        if (std::string(commands).starts_with("invalid")) {
+            require(output.str().find("[ERROR] Unknown account action") != std::string::npos,
+                "unknown commands report an error rather than silently cancelling");
+        }
     }
 }
 
@@ -501,15 +512,26 @@ void test_menu_to_tick_chain(const fs::path& root) {
     auto encrypted = root / "config.enc";
     create_market_capture_key(key);
     save_market_capture_config(config(), encrypted, key);
-    std::istringstream input("3\n\n3\nSTART\nu\n");
+    std::istringstream input("3\nshow\nu\n3\nstart\nu\n");
     std::ostringstream output;
     std::ostringstream errors;
     unsigned launches = 0;
+    unsigned connections = 0;
     cli::run_market_capture_menu(encrypted, key, input, output, errors,
         [&] (const fs::path& selected_config, const fs::path& selected_key) {
             ++launches;
             fake_md_api api;
-            market_capture_session session(load_market_capture_config(selected_config, selected_key),
+            auto account = load_market_capture_config(selected_config, selected_key);
+            std::ostringstream worker_output;
+            if (!cli::run_market_login_menu(account, input, worker_output, true)) {
+                require(api.spi == nullptr && api.subscriptions.empty(),
+                    "returning from account actions does not initialize the SDK or subscribe");
+                require(worker_output.str().find("market.password: \"test-only\"") != std::string::npos,
+                    "option 3 can SHOW passwords immediately without first selecting START");
+                return 0;
+            }
+            ++connections;
+            market_capture_session session(std::move(account),
                 files.paths, root / "state", files.factory(api));
             ready(session);
             require(api.has_expected_login && api.subscriptions == std::vector<std::string>{"rb2701", "ag2612"},
@@ -526,7 +548,10 @@ void test_menu_to_tick_chain(const fs::path& root) {
             require(session.ticks_written() == 3 && api.releases == 1, "all first/pending ticks persisted and API released");
             return 0;
         });
-    require(launches == 1 && errors.str().empty(), "cancel does not connect; explicit confirmation launches once");
+    require(launches == 2 && connections == 1 && errors.str().empty(),
+        "option 3 opens actions immediately; only START connects, without a second confirmation");
+    require(output.str().find("Type START to confirm") == std::string::npos,
+        "capture menu has no extra START prompt before the account actions");
     for (const auto& file : {files.output("rb2701", "20261113"), files.output("ag2612", "20261113"),
                              files.output("rb2701", "20261114")}) {
         const auto text = read(file);
@@ -590,8 +615,12 @@ void test_account_profiles(const fs::path& root) {
             ++launches;
             require(chosen == first && chosen_key == first_key,
                 "capture launches the account and key selected from the account list");
-            require(load_market_capture_config(chosen, chosen_key).password == "test-only",
+            const auto account = load_market_capture_config(chosen, chosen_key);
+            require(account.password == "test-only",
                 "selected account can be decrypted with its own key");
+            std::ostringstream worker_output;
+            require(cli::run_market_login_menu(account, capture, worker_output, true),
+                "selected profile reaches its action menu directly");
             return 0;
         });
     require(launches == 1 && selected == first && key == first_key,

@@ -1,9 +1,10 @@
-// Review decrypted account fields before connecting; secrets require local terminal consent.
-// Source: user login diagnostics request, 2026-11-23. Signature: GitHub Copilot (gpt-6.1-sol).
+// One account action menu: START connects; SHOW reveals fields without connecting.
+// Source: user menu simplification request, 2026-11-23. Signature: GitHub Copilot (gpt-6.1-sol).
 #pragma once
 
 #include <seastar/xtrader/market_capture_config.hh>
 
+#include <algorithm>
 #include <iomanip>
 #include <istream>
 #include <ostream>
@@ -51,27 +52,42 @@ inline void print_market_login_info(
            << std::flush;
 }
 
-inline bool confirm_market_login(
+inline bool run_market_login_menu(
         const market_capture_config& config, std::istream& input, std::ostream& output,
         bool interactive_terminal) {
-    print_market_login_info(config, output);
+    validate_market_capture_config(config);
     if (!interactive_terminal) {
+        print_market_login_info(config, output);
         output << "[INFO] Non-interactive capture: secrets stay hidden; no plaintext review is available.\n";
         return true;
     }
-    output << "[WARN] SHOW displays full passwords and AuthCode once. Terminal scrollback or recording "
-              "may retain them; use a trusted terminal without screen sharing.\n"
-              "Type LOGIN to connect, SHOW to review secrets, or u/Enter to cancel: " << std::flush;
     std::string command;
-    if (!std::getline(input, command)) { command.clear(); }
-    if (command == "SHOW") {
-        print_market_login_info(config, output, true);
-        output << "After checking the fields, type LOGIN to connect (anything else cancels): " << std::flush;
+    while (true) {
+        output << "\n[CTP Account Actions - not connected]\n"
+               << "Market front: " << std::quoted(config.market_front)
+               << "\nBrokerID: " << std::quoted(config.broker_id)
+               << "  UserID: " << std::quoted(config.user_id)
+               << "\nContracts: " << config.contracts.size();
+        if (config.contracts.empty()) { output << " (enter contracts after START)"; }
+        output << "\n1) START - Start read-only market capture\n"
+                  "2) SHOW  - Show account details and full passwords (no connection)\n"
+                  "u) Back\nSelect [1/START, 2/SHOW, u]: " << std::flush;
         if (!std::getline(input, command)) { command.clear(); }
+        std::transform(command.begin(), command.end(), command.begin(), [] (unsigned char ch) {
+            return static_cast<char>(ch >= 'a' && ch <= 'z' ? ch - 'a' + 'A' : ch);
+        });
+        if (command == "1" || command == "START") { return true; }
+        if (command == "2" || command == "SHOW") {
+            output << "[WARN] Full passwords and AuthCode follow; terminal scrollback or recording "
+                      "may retain them. Do not share this screen.\n";
+            print_market_login_info(config, output, true);
+        } else if (command.empty() || command == "U" || command == "BACK" || command == "0") {
+            output << "[CANCELLED] Account actions closed; no connection made.\n" << std::flush;
+            return false;
+        } else {
+            output << "[ERROR] Unknown account action; choose 1/START, 2/SHOW or u.\n";
+        }
     }
-    if (command == "LOGIN") { return true; }
-    output << "[CANCELLED] Account review cancelled; no connection made.\n" << std::flush;
-    return false;
 }
 
 } // namespace seastar::xtrader::cli
