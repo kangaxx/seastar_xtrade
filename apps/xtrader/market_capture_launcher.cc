@@ -69,7 +69,7 @@ int launch(const char* name, std::vector<std::string> arguments) {
 } // namespace
 
 void open_market_capture_menu() {
-    const auto& files = current_files();
+    auto& files = current_files();
     run_market_capture_menu(files.config, files.key, std::cin, std::cout, std::cerr,
         [] (const auto& config, const auto& key) {
             return launch("xtrader_market_capture", {"--config", config.string(), "--key-file", key.string()});
@@ -99,7 +99,7 @@ void open_legacy_import_menu() {
 
 void open_plaintext_import_menu() {
     auto& files = current_files();
-    run_plaintext_import_menu(files.config, std::cin, std::cout, std::cerr,
+    run_plaintext_import_menu(files.config, files.key, std::cin, std::cout, std::cerr,
         [&] (const auto& source) {
             const auto directory = files.config.has_parent_path() ? files.config.parent_path()
                                                                     : std::filesystem::path(".");

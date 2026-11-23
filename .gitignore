@@ -21,3 +21,4 @@ compile_commands.json
 
 # Local encrypted configuration files.
 *.enc
+*.enc.profile

@@ -256,7 +256,7 @@ void run_root_menu() {
         std::cout << "8) Backtest setup (Run is under construction)" << std::endl;
         std::cout << "9) Read-only CTP market capture" << std::endl;
         std::cout << "10) Initial CTP key" << std::endl;
-        std::cout << "11) Select encrypted market configuration" << std::endl;
+        std::cout << "11) Select CTP account / set alias" << std::endl;
         std::cout << "12) Import legacy X-Trader INI" << std::endl;
         std::cout << "13) Import plaintext X-Trader INI" << std::endl;
         std::cout << "q) Quit" << std::endl;

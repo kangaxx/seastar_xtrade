@@ -310,15 +310,18 @@ void test_plaintext_import(const fs::path& root) {
     auto selected = root / "previous.enc";
     std::ostringstream output;
     std::ostringstream errors;
-    std::istringstream input(source.string() + "\n");
-    cli::run_plaintext_import_menu(selected, input, output, errors,
+    std::istringstream input(source.string() + "\nSimNow account\n");
+    cli::run_plaintext_import_menu(selected, key, input, output, errors,
         [&] (const fs::path& path) {
             require(path == source, "plaintext importer receives only the supplied source path");
             return encrypted;
         });
     require(selected == encrypted && errors.str().empty(), "successful plaintext import selects generated config");
+    const auto profile = cli::load_market_profile(encrypted);
+    require(profile && profile->alias == "SimNow account" && profile->key == key,
+        "plaintext import saves the chosen account alias and key");
     std::istringstream cancelled("u\n");
-    cli::run_plaintext_import_menu(selected, cancelled, output, errors,
+    cli::run_plaintext_import_menu(selected, key, cancelled, output, errors,
         [] (const fs::path&) -> fs::path { throw std::runtime_error("must not run"); });
     require(selected == encrypted, "cancelled plaintext import preserves selected config");
 }
@@ -398,8 +401,8 @@ void test_initial_ctp_key_menu(const fs::path& root) {
 
 void test_menu_to_tick_chain(const fs::path& root) {
     fixture files(root);
-    const auto key = root / "key";
-    const auto encrypted = root / "config.enc";
+    auto key = root / "key";
+    auto encrypted = root / "config.enc";
     create_market_capture_key(key);
     save_market_capture_config(config(), encrypted, key);
     std::istringstream input("3\n\n3\nSTART\nu\n");
@@ -442,6 +445,71 @@ void test_menu_to_tick_chain(const fs::path& root) {
     }
     require(output.str().find("test-only") == std::string::npos
         && output.str().find("offline-user") == std::string::npos, "menu does not expose credentials");
+}
+
+void test_account_profiles(const fs::path& root) {
+    fs::create_directories(root);
+    const auto first = root / "a.enc";
+    const auto second = root / "b.enc";
+    const auto first_key = root / "a.key";
+    const auto second_key = root / "b.key";
+    initialize_market_capture_config(config(), first, first_key);
+    initialize_market_capture_config(config(), second, second_key);
+    const auto credentials = read(second);
+    cli::save_market_profile(first, {"Sim account", first_key});
+    const std::string alias = "\xe4\xbb\xbf\xe7\x9c\x9f \"CTP\"";
+    cli::save_market_profile(second, {alias, second_key});
+    std::ostringstream output;
+    std::ostringstream errors;
+    auto selected = first;
+    auto key = first_key;
+    std::istringstream pick("2\n");
+    cli::select_market_config(selected, key, pick, output, errors);
+    require(selected == second && key == second_key && errors.str().empty(),
+        "numbered selection automatically adopts the account's matching key");
+    require(output.str().find(alias) != std::string::npos,
+        "selection lists persisted UTF-8 aliases without decrypting credentials");
+
+    std::istringstream rename("r\nNew name\n");
+    cli::select_market_config(selected, key, rename, output, errors);
+    require(cli::load_market_profile(second)->alias == "New name" && read(second) == credentials,
+        "renaming persists without modifying encrypted credentials");
+    const auto saved = read(cli::market_profile_file(second));
+    std::istringstream cancel_alias("r\nu\n");
+    cli::select_market_config(selected, key, cancel_alias, output, errors);
+    require(read(cli::market_profile_file(second)) == saved, "cancelled rename leaves metadata unchanged");
+    std::istringstream invalid_alias("r\ninvalid\talias\n");
+    cli::select_market_config(selected, key, invalid_alias, output, errors);
+    require(read(cli::market_profile_file(second)) == saved
+        && errors.str().find("[ERROR]") != std::string::npos, "invalid alias is rejected visibly");
+    errors.str("");
+    errors.clear();
+
+    unsigned launches = 0;
+    std::istringstream capture("4\n1\n3\nSTART\nu\n");
+    cli::run_market_capture_menu(selected, key, capture, output, errors,
+        [&] (const fs::path& chosen, const fs::path& chosen_key) {
+            ++launches;
+            require(chosen == first && chosen_key == first_key,
+                "capture launches the account and key selected from the account list");
+            require(load_market_capture_config(chosen, chosen_key).password == "test-only",
+                "selected account can be decrypted with its own key");
+            return 0;
+        });
+    require(launches == 1 && selected == first && key == first_key,
+        "capture selection survives returning to the root menu");
+    require(errors.str().empty() && output.str().find("test-only") == std::string::npos
+        && output.str().find("offline-user") == std::string::npos,
+        "account menu and launch confirmation do not expose credentials");
+    fs::remove(second_key);
+    std::istringstream missing("2\n");
+    cli::select_market_config(selected, key, missing, output, errors);
+    require(selected == first && key == first_key && errors.str().find("[ERROR]") != std::string::npos,
+        "missing saved key does not silently reuse the current account's key");
+    replace(cli::market_profile_file(second), "invalid metadata\n");
+    std::istringstream corrupt("2\n");
+    cli::select_market_config(selected, key, corrupt, output, errors);
+    require(selected == first && key == first_key, "corrupt metadata cannot replace selected account");
 }
 
 void test_failures(const fs::path& root) {
@@ -571,6 +639,7 @@ int main() {
         test_legacy_import(root / "legacy");
         test_plaintext_import(root / "plaintext");
         test_market_config_selection(root / "selection");
+        test_account_profiles(root / "profiles");
         test_initial_ctp_key_menu(root / "initialization_menu");
         test_menu_to_tick_chain(root / "chain");
         test_failures(root / "failures");

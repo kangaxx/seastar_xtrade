@@ -100,7 +100,8 @@ seastar_add_app(xtrader_cli SOURCES
 
 target_include_directories(app_xtrader_cli PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
-    ${CMAKE_SOURCE_DIR}/include)
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src/xtrader)
 
 target_link_libraries(app_xtrader_cli PRIVATE hiredis)
 
