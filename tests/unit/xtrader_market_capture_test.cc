@@ -1,6 +1,7 @@
 // Offline menu -> authenticated config -> fake MdApi -> real Tick file chain.
 // Source: user request, 2026-11-13. Signature: GitHub Copilot (Auto).
 #include <seastar/xtrader/market_capture.hh>
+#include "market_capture_login.hh"
 #include "market_capture_menu.hh"
 #include "market_tick_writer.hh"
 
@@ -150,6 +151,101 @@ void ready(market_capture_session& session) {
         session.poll_for(std::chrono::milliseconds(0));
     }
     require(session.is_ready(), "all configured subscriptions acknowledged");
+}
+
+void test_login_review() {
+    auto account = config();
+    account.password = " market-password ";
+    account.trader.emplace();
+    auto& trader = *account.trader;
+    trader.trade_front = "tcp://127.0.0.1:2";
+    trader.broker_id = "other";
+    trader.user_id = "trader-user";
+    trader.password = "trader-password";
+    trader.app_id = "offline-app";
+    trader.auth_code = "offline-auth-code";
+    trader.user_product_info = "offline-product";
+    const auto has_secrets = [] (const std::string& text) {
+        return text.find("market-password") != std::string::npos
+            || text.find("trader-password") != std::string::npos
+            || text.find("offline-auth-code") != std::string::npos;
+    };
+    std::ostringstream output;
+    std::istringstream confirm("LOGIN\n");
+    require(cli::confirm_market_login(account, confirm, output, true),
+        "LOGIN explicitly confirms the account before connecting");
+    require(!has_secrets(output.str())
+        && output.str().find("market.user_id: \"offline-user\"") != std::string::npos
+        && output.str().find("market.market_front: \"tcp://127.0.0.1:1\"") != std::string::npos
+        && output.str().find("market.broker_id: \"offline\"") != std::string::npos
+        && output.str().find("SHFE:rb2701 SHFE:ag2612") != std::string::npos,
+        "default review identifies the actual market account and subscriptions without passwords");
+    output.str("");
+    std::istringstream reveal("SHOW\nLOGIN\n");
+    require(cli::confirm_market_login(account, reveal, output, true),
+        "SHOW followed by LOGIN reveals and confirms the configuration");
+    require(output.str().find("market.password: \" market-password \"") != std::string::npos
+        && output.str().find("trader.password: \"trader-password\"") != std::string::npos
+        && output.str().find("trader.auth_code: \"offline-auth-code\"") != std::string::npos
+        && output.str().find("trader.user_id: \"trader-user\"") != std::string::npos
+        && output.str().find("trader.broker_id: \"other\"") != std::string::npos
+        && output.str().find("trader.trade_front: \"tcp://127.0.0.1:2\"") != std::string::npos
+        && output.str().find("trader.app_id: \"offline-app\"") != std::string::npos
+        && output.str().find("trader.user_product_info: \"offline-product\"") != std::string::npos
+        && output.str().find("NOT used for this login") != std::string::npos,
+        "full review preserves password spaces and distinguishes stored trader fields from MD login");
+    output.str("");
+    std::istringstream redirected("SHOW\nLOGIN\n");
+    require(cli::confirm_market_login(account, redirected, output, false)
+        && !has_secrets(output.str()) && redirected.peek() == 'S',
+        "non-terminal capture never reveals secrets or consumes commands meant for capture input");
+    trader.password.clear();
+    trader.auth_code.clear();
+    output.str("");
+    cli::print_market_login_info(account, output, true);
+    require(output.str().find("trader.password: \"(not configured)\"") != std::string::npos
+        && output.str().find("trader.auth_code: \"(not configured)\"") != std::string::npos,
+        "optional absent secrets are visibly unconfigured");
+}
+
+void test_login_review_cancellation() {
+    auto account = config();
+    account.contracts.clear();
+    for (const auto* commands : {"\n", "u\n", "invalid\n", "", "SHOW\n", "SHOW\nu\n"}) {
+        std::istringstream input(commands);
+        std::ostringstream output;
+        require(!cli::confirm_market_login(account, input, output, true)
+            && output.str().find("[CANCELLED]") != std::string::npos
+            && output.str().find("no connection made") != std::string::npos,
+            "cancel, unknown input or EOF before/after SHOW cannot confirm a login");
+        require(output.str().find("not configured; you will be prompted before connecting") != std::string::npos
+            && output.str().find("Trader: not configured") != std::string::npos,
+            "contract-free market-only profiles can be reviewed before contract entry");
+    }
+}
+
+void test_market_status(const fs::path& root) {
+    fixture files(root);
+    fake_md_api api;
+    market_capture_session session(config(), files.paths, root / "state", files.factory(api));
+    const auto has_state = [&session] (const char* expected) {
+        std::ostringstream output;
+        session.print_status(output);
+        return output.str().find(expected) != std::string::npos
+            && output.str().find("test-only") == std::string::npos
+            && output.str().find("offline-user") == std::string::npos;
+    };
+    require(has_state("[MARKET] idle (not connected);"), "status distinguishes local configuration from a connection");
+    session.start();
+    require(has_state("[MARKET] connecting;"), "status shows connection attempts before the front callback");
+    session.poll_for(std::chrono::milliseconds(0));
+    require(has_state("[MARKET] logging_in;"), "status identifies a submitted login request");
+    session.poll_for(std::chrono::milliseconds(0));
+    require(has_state("[MARKET] subscribing (login succeeded);"), "subscription state explicitly confirms MD login");
+    for (int index = 0; index < 2; ++index) { session.poll_for(std::chrono::milliseconds(0)); }
+    require(has_state("[MARKET] subscribed;"), "ready status still requires all subscription acknowledgements");
+    session.stop();
+    require(has_state("[MARKET] stopped;"), "stopped status cannot be mistaken for a new connection attempt");
 }
 
 void test_authenticated_config(const fs::path& root) {
@@ -469,6 +565,8 @@ void test_account_profiles(const fs::path& root) {
         "numbered selection automatically adopts the account's matching key");
     require(output.str().find(alias) != std::string::npos,
         "selection lists persisted UTF-8 aliases without decrypting credentials");
+    require(output.str().find("login has NOT been attempted. This is not a login failure.") != std::string::npos,
+        "local selection cannot be mistaken for a rejected account");
 
     std::istringstream rename("r\nNew name\n");
     cli::select_market_config(selected, key, rename, output, errors);
@@ -522,6 +620,10 @@ void test_failures(const fs::path& root) {
         session.poll_for(std::chrono::milliseconds(0));
         require_failure([&] { session.poll_for(std::chrono::milliseconds(0)); }, "failed login cannot subscribe");
         require(api.subscriptions.empty(), "no subscription after login failure");
+        std::ostringstream status;
+        session.print_status(status);
+        require(status.str().find("[MARKET] failed;") != std::string::npos,
+            "rejected login is distinct from an unattempted login or pending connection");
         session.stop();
     }
     {
@@ -634,6 +736,9 @@ int main() {
     if (!created) { std::cerr << "cannot create offline test fixture\n"; return 1; }
     const fs::path root(created);
     try {
+        test_login_review();
+        test_login_review_cancellation();
+        test_market_status(root / "status");
         test_authenticated_config(root / "crypto");
         test_configuration_initialization(root / "initialization");
         test_legacy_import(root / "legacy");

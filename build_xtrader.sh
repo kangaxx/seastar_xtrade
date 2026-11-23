@@ -116,6 +116,7 @@ for file in configure.py apps/xtrader/CMakeLists.txt apps/xtrader/xtrader_entry_
 		include/seastar/xtrader/recovery_coordinator.hh src/xtrader/recovery_coordinator.cc \
 		apps/xtrader/xtrader_market_capture.cc apps/xtrader/xtrader_market_config.cc \
 		apps/xtrader/market_capture_launcher.cc apps/xtrader/market_capture_menu.hh apps/xtrader/market_profile.hh \
+		apps/xtrader/market_capture_login.hh \
 		include/seastar/xtrader/market_capture.hh include/seastar/xtrader/market_capture_config.hh \
 		src/xtrader/market_capture.cc src/xtrader/market_capture_config.cc \
 		src/xtrader/market_tick_writer.cc src/xtrader/market_tick_writer.hh src/xtrader/market_capture_io.hh \

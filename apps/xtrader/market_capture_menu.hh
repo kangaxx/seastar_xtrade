@@ -49,6 +49,7 @@ inline void run_market_capture_menu(
             output << "Selected account: " << market_profile_label(config, errors)
                    << "\nEncrypted config: " << config.string() << "\nKey file: " << key.string()
                    << "\nThis connects to the configured market front and writes real Tick data.\n"
+                      "The collector will show decrypted account fields before connecting; SHOW can reveal passwords.\n"
                       "Type START to confirm (Enter cancels): " << std::flush;
             if (!std::getline(input, line)) { return; }
             if (line != "START") { continue; }
@@ -169,7 +170,8 @@ inline void select_market_config(
         key = std::move(selected_key);
         output << "[OK] Account selected: " << market_profile_label(config, errors)
                << ". Menu 9 uses this configuration and key.\n"
-                  "Identity and environment are not verified; no connection made.\n";
+                  "[INFO] Local account selection only; login has NOT been attempted. This is not a login failure.\n"
+                  "[INFO] Use Menu 9 -> 3 -> START to review account fields and connect.\n";
     } catch (const std::exception& error) {
         errors << "[ERROR] Cannot select account; current paths unchanged: " << error.what() << '\n';
     }

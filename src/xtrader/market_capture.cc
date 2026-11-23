@@ -23,6 +23,18 @@ using steady_clock = std::chrono::steady_clock;
 enum class event_kind { connected, disconnected, login, subscribed, tick, error };
 enum class feed_state { idle, connecting, logging_in, subscribing, ready, stopped };
 
+const char* feed_state_name(feed_state state) {
+    switch (state) {
+    case feed_state::idle: return "idle (not connected)";
+    case feed_state::connecting: return "connecting";
+    case feed_state::logging_in: return "logging_in";
+    case feed_state::subscribing: return "subscribing (login succeeded)";
+    case feed_state::ready: return "subscribed";
+    case feed_state::stopped: return "stopped";
+    }
+    throw std::logic_error("invalid market feed state");
+}
+
 struct capture_event {
     event_kind kind{};
     int error_code = 0;
@@ -160,7 +172,7 @@ public:
     uint64_t ticks_written() const noexcept { return _written; }
 
     void print_status(std::ostream& output) const {
-        output << "[MARKET] " << (is_ready() ? "subscribed" : "connecting/login/subscribing")
+        output << "[MARKET] " << (_failed ? "failed" : feed_state_name(_state))
                << "; subscriptions=" << _subscribed.size() << '/' << _config.contracts.size()
                << "; ticks_written=" << _written << '\n';
         for (const auto& contract : _config.contracts) {
