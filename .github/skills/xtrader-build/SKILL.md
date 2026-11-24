@@ -56,7 +56,7 @@
 
 - 连接入口：先登录云服务器 L，再执行 `/root/ssh_Lily_Data_Server_by_LocalNet.sh`。
 - 脚本当前内容：通过 SSH 连接 `root@172.24.205.38`。
-- 已从跳转目标观察到 `/root/seastar` 路径；执行构建前仍需确认仓库状态、目标实例和资源。
+- 已从跳转目标观察到该项目实际路径为 `/root/github/seastar_xtrade`；执行构建前仍需确认仓库状态、目标实例和资源。
 - 这些是基于 Lenovo 笔记本的跳转连接记录。L 与 L D 的主机标识检查结果曾不一致，使用前应重新核实身份；不要默认目标与 L 是同一实例或不同实例。
 
 ## Standard Workflow
