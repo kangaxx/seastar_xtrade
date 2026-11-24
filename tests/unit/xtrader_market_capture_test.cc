@@ -91,6 +91,9 @@ public:
     CThostFtdcMdSpi* spi = nullptr;
     int releases = 0;
     int login_error = 0;
+    int login_response_id = 1;
+    bool has_login_response = true;
+    bool is_login_response_last = true;
     int subscribe_error = 0;
     bool has_expected_login = false;
     std::vector<std::string> subscriptions;
@@ -104,12 +107,13 @@ public:
     void RegisterFensUserInfo(CThostFtdcFensUserInfoField*) override {}
     void RegisterSpi(CThostFtdcMdSpi* handler) override { spi = handler; }
     int ReqUserLogin(CThostFtdcReqUserLoginField* request, int id) override {
-        has_expected_login = std::string(request->BrokerID) == "offline"
+        has_expected_login = id == 1 && std::string(request->BrokerID) == "offline"
             && std::string(request->UserID) == "offline-user" && std::string(request->Password) == "test-only";
         CThostFtdcRspUserLoginField response{};
         CThostFtdcRspInfoField error{};
         error.ErrorID = login_error;
-        spi->OnRspUserLogin(&response, &error, id, true);
+        spi->OnRspUserLogin(has_login_response ? &response : nullptr, &error,
+                           login_response_id, is_login_response_last);
         return 0;
     }
     int SubscribeMarketData(char* instruments[], int count) override {
@@ -724,6 +728,77 @@ void test_account_profiles(const fs::path& root) {
     require(selected == first && key == first_key, "corrupt metadata cannot replace selected account");
 }
 
+// Exercise MD response correlation and terminal payload checks without a real front.
+// Source: code=0 login report, 2026-11-24. Signature: GitHub Copilot (gpt-6.1-sol).
+void test_login_response_variants(const fs::path& root) {
+    fixture files(root);
+    {
+        fake_md_api api;
+        api.login_response_id = 0;
+        market_capture_session session(config(), files.paths, root / "zero_id", files.factory(api));
+        ready(session);
+        require(api.has_expected_login && api.subscriptions.size() == 2,
+            "zero-ID response completes the only pending login and subscribes once");
+        api.send(tick());
+        session.poll_for(std::chrono::milliseconds(0));
+        session.stop();
+        require(session.ticks_written() == 1 && fs::exists(files.output("rb2701", "20261113")),
+            "zero-ID login can write a real Tick through the shared writer");
+    }
+    {
+        fake_md_api api;
+        api.has_login_response = false;
+        api.is_login_response_last = false;
+        market_capture_session session(config(), files.paths, root / "partial", files.factory(api));
+        session.start();
+        session.poll_for(std::chrono::milliseconds(0));
+        session.poll_for(std::chrono::milliseconds(0));
+        require(api.subscriptions.empty() && !session.is_ready(),
+            "empty non-final response does not subscribe or fail prematurely");
+        CThostFtdcRspUserLoginField response{};
+        api.spi->OnRspUserLogin(&response, nullptr, 1, true);
+        for (int index = 0; index < 3; ++index) { session.poll_for(std::chrono::milliseconds(0)); }
+        require(session.is_ready(), "successful final response with absent error info completes login");
+        session.stop();
+    }
+    for (int variant = 0; variant < 3; ++variant) {
+        fake_md_api api;
+        if (variant == 0) { api.login_response_id = 2; }
+        if (variant == 1) { api.has_login_response = false; }
+        if (variant == 2) { api.login_response_id = 0; api.login_error = 7; }
+        market_capture_session session(config(), files.paths, root / ("rejected_" + std::to_string(variant)),
+                                       files.factory(api));
+        session.start();
+        session.poll_for(std::chrono::milliseconds(0));
+        std::string failure;
+        try { session.poll_for(std::chrono::milliseconds(0)); }
+        catch (const std::runtime_error& error) { failure = error.what(); }
+        const char* expected[] = {"request ID mismatch", "final login response has no payload", "login response failed"};
+        require(failure.find(expected[variant]) != std::string::npos
+            && failure.find(variant == 2 ? "code=7" : "code=0") != std::string::npos
+            && failure.find("request_id=") != std::string::npos
+            && failure.find("state=logging_in") != std::string::npos
+            && failure.find("has_payload=") != std::string::npos
+            && failure.find("is_last=true") != std::string::npos,
+            "login failure reports its actual reason and callback context");
+        require(api.subscriptions.empty() && !session.is_ready(),
+            "mismatched, missing or failed final response never subscribes");
+        session.stop();
+    }
+    {
+        fake_md_api api;
+        market_capture_session session(config(), files.paths, root / "duplicate", files.factory(api));
+        ready(session);
+        CThostFtdcRspUserLoginField response{};
+        api.spi->OnRspUserLogin(&response, nullptr, 0, true);
+        require_failure([&] { session.poll_for(std::chrono::milliseconds(0)); },
+            "zero-ID compatibility cannot accept a second login outside logging_in");
+        require(api.subscriptions.size() == 2 && !session.is_ready(),
+            "duplicate response cannot issue another subscription");
+        session.stop();
+    }
+}
+
 void test_failures(const fs::path& root) {
     fixture files(root);
     {
@@ -865,6 +940,7 @@ int main() {
         test_account_profiles(root / "profiles");
         test_initial_ctp_key_menu(root / "initialization_menu");
         test_menu_to_tick_chain(root / "chain");
+        test_login_response_variants(root / "login_responses");
         test_failures(root / "failures");
         test_output_boundaries(root / "boundaries");
         test_append_and_file_lock(root / "append");

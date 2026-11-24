@@ -341,11 +341,26 @@ private:
     }
 
     void subscribe(const capture_event& event) {
-        if (_state != feed_state::logging_in || event.request_id != 1
-                || event.error_code != 0 || !event.has_payload) {
-            throw std::runtime_error("CTP MD login response failed, code=" + std::to_string(event.error_code));
+        const auto context = "code=" + std::to_string(event.error_code)
+            + "; request_id=" + std::to_string(event.request_id)
+            + "; state=" + feed_state_name(_state)
+            + "; has_payload=" + (event.has_payload ? "true" : "false")
+            + "; is_last=" + (event.is_last ? "true" : "false");
+        if (_state != feed_state::logging_in) {
+            throw std::runtime_error("unexpected CTP MD login response; " + context);
+        }
+        // A zero ID can identify the sole pending MD login; never relax this for TraderApi.
+        // Source: code=0 login report, 2026-11-24. Signature: GitHub Copilot (gpt-6.1-sol).
+        if (event.request_id != 1 && event.request_id != 0) {
+            throw std::runtime_error("CTP MD login response request ID mismatch (expected 1 or 0); " + context);
+        }
+        if (event.error_code != 0) {
+            throw std::runtime_error("CTP MD login response failed; " + context);
         }
         if (!event.is_last) { return; }
+        if (!event.has_payload) {
+            throw std::runtime_error("CTP MD final login response has no payload; " + context);
+        }
         std::vector<char*> instruments;
         for (auto& contract : _config.contracts) { instruments.push_back(contract.instrument.data()); }
         _state = feed_state::subscribing;
