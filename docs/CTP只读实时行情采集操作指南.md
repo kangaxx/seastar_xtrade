@@ -315,7 +315,8 @@ export XTRADER_MARKET_KEY_FILE="$HOME/.local/share/xtrader-keys/market.key"
 4. 观察 `connecting` → `logging_in` → `subscribing (login succeeded)`，
    以及 `subscriptions=已确认数/配置数`，全部确认后显示 `subscribed`。
 5. 收到行情后显示每个合约的时间、最新价、买卖一档、累计成交量和持仓量，
-   并检查 `ticks_written` 增长及对应 CSV。
+   同时**自动追加写入 Tick CSV，无需另按保存键**。保存目录只在启动时通过 `[RECORDING]`
+   显示一次；运行状态不重复显示文件路径或保存条数，正常停止时显示一次本次写入总数。
 6. 按 **Enter** 停止：释放 SDK、排空已接受的 Tick、同步文件，返回菜单。
    SIGINT/SIGTERM/SIGHUP 同样请求停止；启动它的父进程退出也请求停止，避免菜单退出后留下孤立采集器。
    从 CLI 按 Ctrl+C 还可能触发 CLI 自身的退出，
@@ -344,7 +345,7 @@ Select [1/START, 2/SHOW, u]:
 输入、输出都为交互终端时，支持数字和不区分大小写的命令：
 
 - **1 / START**：直接开始只读行情采集，不再要求 LOGIN 或重复确认。
-  未配置合约时先输入有效的 `EXCHANGE:instrument` 清单，再连接行情前置。
+  未配置合约时先用合约选择界面添加合约并输入 `d`，再连接行情前置。
 - **2 / SHOW**：直接显示行情前置、BrokerID、UserID、订阅合约和完整密码；
   若导入过交易字段，还显示交易前置、BrokerID、UserID、密码、AppID、AuthCode、UserProductInfo，
   并明确标注这些交易字段仅存储、**不参与本次行情登录**。查看后回到同一操作菜单，不连接服务器。
@@ -371,11 +372,35 @@ CLI 的账号操作菜单要求输入和输出都是交互终端；重定向时�
 
 ## 6. Tick 文件和日期语义
 
+**START 不仅显示行情，也会自动保存每个有效 Tick**；无需再调用导出或保存菜单。
+首个有效 Tick 到达时创建目录、CSV 和表头，之后逐条追加。尚未收到 Tick 时不会创建空行情 CSV，
+已存在的历史日文件则保留。保存失败会报错并停止，不会默默只显示不记录。
+
 所有行情文件通过 `market_data_paths` 构造并校验：
 
 ```text
 /data/x_trader_data/futures/<exchange>/<instrument>/tick/<ActionDay>.csv
 ```
+
+例如螺纹钢 `rb2701` 收到 `ActionDay=20261124` 时，文件为：
+`/data/x_trader_data/futures/SHFE/rb2701/tick/20261124.csv`。
+
+启动的 `[RECORDING]` 提示表示自动记录已启用，不等于已经收到或保存了行情。
+运行期间约每秒显示行情状态，但不重复输出保存路径、已写入条数或同步进度，
+也不会每个 Tick 打印一条保存消息。正常停止时排空已接受的 Tick、同步文件，
+再显示一次 `[STOPPED] ... ticks_written=...` 总数。
+该数值只在完整 CSV 行写入成功后增加，统计本次采集跨合约、跨日期的条数，
+不是已有文件总行数，也不表示数据完整无遗漏。
+
+可按上述目录规则，在另一 SSH 终端只读查看文件，例如：
+
+```bash
+tail -n 3 /data/x_trader_data/futures/SHFE/rb2701/tick/20261124.csv
+wc -l /data/x_trader_data/futures/SHFE/rb2701/tick/20261124.csv
+```
+
+这里的合约与日期须替换为实际订阅合约与 Tick 的 `ActionDay`；`wc -l` 包括一行表头及之前采集留下的行。
+这些命令不会启动或停止采集，也不要将文件重定向覆盖为同名文件。
 
 `ActionDay` 是 SDK 提供的自然日期，`TradingDay` 是交易日，两者独立保留；
 夜盘可能不同。文件按 `ActionDay` 切换，不按系统今天或交易日猜测。

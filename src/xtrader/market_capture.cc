@@ -174,8 +174,7 @@ public:
 
     void print_status(std::ostream& output) const {
         output << "[MARKET] " << (_failed ? "failed" : feed_state_name(_state))
-               << "; subscriptions=" << _subscribed.size() << '/' << _config.contracts.size()
-               << "; ticks_written=" << _written << '\n';
+               << "; subscriptions=" << _subscribed.size() << '/' << _config.contracts.size() << '\n';
         for (const auto& contract : _config.contracts) {
             output << contract.exchange << ':' << contract.instrument << ' ';
             const auto quote = _quotes.find(contract.instrument);

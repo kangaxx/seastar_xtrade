@@ -372,7 +372,10 @@ void test_market_status(const fs::path& root) {
         session.print_status(output);
         return output.str().find(expected) != std::string::npos
             && output.str().find("test-only") == std::string::npos
-            && output.str().find("offline-user") == std::string::npos;
+            && output.str().find("offline-user") == std::string::npos
+            && output.str().find("ticks_written=") == std::string::npos
+            && output.str().find("ticks_synced=") == std::string::npos
+            && output.str().find("; file=") == std::string::npos;
     };
     require(has_state("[MARKET] idle (not connected);"), "status distinguishes local configuration from a connection");
     session.start();
@@ -383,8 +386,17 @@ void test_market_status(const fs::path& root) {
     require(has_state("[MARKET] subscribing (login succeeded);"), "subscription state explicitly confirms MD login");
     for (int index = 0; index < 2; ++index) { session.poll_for(std::chrono::milliseconds(0)); }
     require(has_state("[MARKET] subscribed;"), "ready status still requires all subscription acknowledgements");
+    require(session.ticks_written() == 0 && !fs::exists(files.output("rb2701", "20261113")),
+        "no Tick data is created before the first Tick");
+    api.send(tick());
+    session.poll_for(std::chrono::milliseconds(0));
+    const auto text = read(files.output("rb2701", "20261113"));
+    require(has_state("last=3500.25") && session.ticks_written() == 1
+        && std::count(text.begin(), text.end(), '\n') == 2,
+        "live status keeps the quote without recording details, while the Tick is still written");
     session.stop();
     require(has_state("[MARKET] stopped;"), "stopped status cannot be mistaken for a new connection attempt");
+    require(session.ticks_written() == 1, "recorded count remains available for the one-time stop summary");
 }
 
 void test_startup_data_directories(const fs::path& root) {
@@ -1016,6 +1028,8 @@ void test_append_and_file_lock(const fs::path& root) {
     ready(damaged);
     api.send(tick());
     require_failure([&] { damaged.poll_for(std::chrono::milliseconds(0)); }, "partial last row is not silently repaired");
+    require(damaged.ticks_written() == 0 && read(file) == text + "incomplete",
+        "failed append does not count a saved row or change existing corrupt content");
     damaged.stop();
 }
 
@@ -1035,7 +1049,7 @@ int main() {
         test_bilingual_login_menu();
         test_login_review();
         test_login_review_cancellation();
-        test_market_status(root / "status");
+        test_market_status(root / "status with spaces");
         test_startup_data_directories(root / "startup_directories");
         test_startup_directory_failures(root / "startup_directory_failures");
         test_authenticated_config(root / "crypto");

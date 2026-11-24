@@ -119,12 +119,20 @@ int main(int argc, char** argv) {
             seastar::xtrader::validate_market_capture_config(config);
         }
         if (STOP_REQUESTED) { throw std::runtime_error(ui_text("market capture cancelled before connecting", "已在连接前取消行情采集")); }
+        const seastar::xtrader::market_data_paths data_paths;
         session = std::make_unique<seastar::xtrader::market_capture_session>(
-            std::move(config), seastar::xtrader::market_data_paths{}, state_directory(),
+            std::move(config), data_paths, state_directory(),
             [] (const char* flow) { return CThostFtdcMdApi::CreateFtdcMdApi(flow, false, false); });
         std::cout << ui_text("[PREPARE] Checking data/state directories before connecting CTP.\n",
                              "[PREPARE] 连接 CTP 前检查数据及状态目录。\n");
         session->start();
+        std::cout << ui_text("[RECORDING] Automatic Tick CSV append enabled. Source directory: ",
+                             "[RECORDING] 已启用 Tick CSV 自动追加写入。来源目录：")
+                  << data_paths.source_root().string() << '\n'
+                  << ui_text("Files are created on the first valid Tick and rotated by ActionDay.\n"
+                             "Sync runs about once per second and on normal stop; no separate save action is needed.\n",
+                             "首个有效 Tick 到达时创建文件，按 ActionDay 自然日期分文件。\n"
+                             "约每秒同步一次，正常停止时再次同步，无需单独保存操作。\n");
         std::cout << ui_text("[START] Read-only CTP market capture; no orders can be submitted.\n"
                              "Press Enter to stop and sync Tick files. Waiting for login/subscription acknowledgements.\n",
                              "[START] CTP 只读行情采集，不能提交订单。\n"
