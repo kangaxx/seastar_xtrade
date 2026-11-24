@@ -12,6 +12,7 @@
 #include "data_source_menu.hh"
 #include "backtest_menu.hh"
 #include "market_capture_menu.hh"
+#include "xtrader_log.hh"
 
 #include <algorithm>
 #include <cctype>
@@ -28,6 +29,8 @@
 namespace {
 
 using seastar::xtrader::cli::ui_text;
+
+namespace xlog = seastar::xtrader::log;
 
 std::string to_lower(std::string input) {
     std::transform(input.begin(), input.end(), input.begin(), [] (unsigned char c) {
@@ -235,6 +238,7 @@ void run_root_menu() {
     // Source: user request, 2026-11-13. Signature: GitHub Copilot (Auto).
     const seastar::xtrader::market_data_paths data_paths;
     auto data_root = data_paths.source_root();
+    xlog::info("menu opened data_root=" + data_root.string());
     std::string import_source_path;
     seastar::xtrader::import_source_type import_source_type = seastar::xtrader::import_source_type::taobao_csv;
     seastar::xtrader::import_mode import_mode = seastar::xtrader::import_mode::incremental;
@@ -275,8 +279,10 @@ void run_root_menu() {
             return;
         }
         input = to_lower(input);
+        xlog::info("menu=" + (input.empty() ? std::string("(empty)") : input));
 
         if (input == "1" || input == "2") {
+            xlog::warning("trading requested but unavailable in this CLI: " + input);
             std::cerr << ui_text("[ERROR] Trading is unavailable in this CLI; no operation was started.",
                                  "[ERROR] 本 CLI 不提供交易功能，未启动任何交易操作。") << std::endl;
         } else if (input == "3") {
@@ -467,6 +473,7 @@ void run_root_menu() {
         } else if (input == "14" || input == "language") {
             seastar::xtrader::cli::run_language_menu(std::cin, std::cout, std::cerr);
         } else if (input == "q" || input == "quit" || input == "exit") {
+            xlog::info("exit");
             std::cout << ui_text("Goodbye!", "再见！") << std::endl;
             break;
         } else {
@@ -478,9 +485,11 @@ void run_root_menu() {
 } // namespace
 
 int main(int ac, char** av) {
+    xlog::initialize("xtrader_cli");
     try {
         (void)seastar::xtrader::cli::current_ui_language();
     } catch (const std::invalid_argument& error) {
+        xlog::error(std::string("invalid XTRADER_LANGUAGE: ") + error.what());
         std::cerr << "[ERROR] " << error.what() << std::endl;
         return 2;
     }
@@ -490,6 +499,7 @@ int main(int ac, char** av) {
     std::cout << ui_text("Build: ", "构建：") << seastar::xtrader::build_type
               << " | Git: " << seastar::xtrader::git_commit << std::endl;
     std::cout << "========================================" << std::endl;
+    xlog::info(std::string("start version=") + seastar::xtrader::get_full_version());
 
     seastar::app_template app;
 

@@ -1,6 +1,7 @@
 // exec-style foreground launch; never passes credentials to a shell or argv.
 // Source: user request, 2026-11-13. Signature: GitHub Copilot (Auto).
 #include "market_capture_menu.hh"
+#include "xtrader_log.hh"
 
 #include <cerrno>
 #include <csignal>
@@ -18,6 +19,8 @@ extern char** environ;
 
 namespace seastar::xtrader::cli {
 namespace {
+
+namespace xlog = seastar::xtrader::log;
 
 std::filesystem::path default_path(const char* variable, const char* fallback) {
     const char* value = std::getenv(variable);
@@ -37,6 +40,7 @@ selected_market_files& current_files() {
 int launch(const char* name, std::vector<std::string> arguments) {
     const auto executable = std::filesystem::read_symlink("/proc/self/exe").parent_path() / name;
     arguments.insert(arguments.begin(), executable.string());
+    xlog::info("spawn " + std::string(name));
     std::vector<char*> argv;
     for (auto& argument : arguments) { argv.push_back(argument.data()); }
     argv.push_back(nullptr);
@@ -58,13 +62,20 @@ int launch(const char* name, std::vector<std::string> arguments) {
     if (!result) { result = ::posix_spawn(&child, executable.c_str(), nullptr, &attributes, argv.data(), environ); }
     ::posix_spawnattr_destroy(&attributes);
     if (result) {
+        xlog::error(std::string("cannot start ") + name + ": "
+            + std::system_error(result, std::generic_category()).what());
         throw std::system_error(result, std::generic_category(), "start sibling market utility (build it first)");
     }
     int status = 0;
     while (::waitpid(child, &status, 0) < 0) {
-        if (errno != EINTR) { throw std::system_error(errno, std::generic_category(), "wait for market process"); }
+        if (errno != EINTR) {
+            xlog::error(std::string("cannot wait for ") + name + ": " + std::system_error(errno, std::generic_category()).what());
+            throw std::system_error(errno, std::generic_category(), "wait for market process");
+        }
     }
-    return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + (WIFSIGNALED(status) ? WTERMSIG(status) : 0);
+    const int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + (WIFSIGNALED(status) ? WTERMSIG(status) : 0);
+    xlog::info(std::string("child ") + name + " exit=" + std::to_string(exit_code));
+    return exit_code;
 }
 
 } // namespace

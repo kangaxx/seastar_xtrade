@@ -4,6 +4,7 @@
 #include <seastar/xtrader/version.hh>
 #include "cli_language.hh"
 #include "market_contract_menu.hh"
+#include "xtrader_log.hh"
 
 #include <iostream>
 #include <openssl/crypto.h>
@@ -17,6 +18,8 @@
 namespace {
 
 using seastar::xtrader::cli::ui_text;
+
+namespace xlog = seastar::xtrader::log;
 
 struct secret_text {
     std::string value;
@@ -141,10 +144,12 @@ void create_config(const char* output, const char* key, bool initialize = false)
 } // namespace
 
 int main(int argc, char** argv) {
+    xlog::initialize("xtrader_market_config");
     try {
         (void)seastar::xtrader::cli::current_ui_language();
         std::cout << "X-Trader Seastar Trading Engine v"
                   << seastar::xtrader::get_full_version() << '\n';
+        xlog::info(std::string("start action=") + (argc > 1 ? argv[1] : "(none)"));
         if (argc == 2 && std::string(argv[1]) == "--help") {
             std::cout << "xtrader_market_config --new-key KEY_FILE\n"
                          "xtrader_market_config --create ENCRYPTED_CONFIG KEY_FILE\n"
@@ -183,6 +188,7 @@ int main(int argc, char** argv) {
         }
         throw std::invalid_argument(ui_text("invalid arguments; use --help", "参数无效，请使用 --help 查看用法"));
     } catch (const std::exception& error) {
+        xlog::error(error.what());
         std::cerr << "[ERROR] " << error.what() << '\n';
         return 2;
     }
