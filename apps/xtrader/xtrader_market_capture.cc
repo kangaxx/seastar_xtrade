@@ -4,6 +4,7 @@
 #include <seastar/xtrader/version.hh>
 #include <ThostFtdcMdApi.h>
 #include "market_capture_login.hh"
+#include "market_contract_menu.hh"
 
 #include <cerrno>
 #include <csignal>
@@ -85,9 +86,11 @@ int main(int argc, char** argv) {
             std::cout << "xtrader_market_capture --config ENCRYPTED_CONFIG --key-file KEY_FILE\n"
                       << ui_text("Read-only CTP MdApi collector. Enter, SIGINT or SIGTERM stops and syncs files.\n"
                                  "Interactive account menu: 1/START connects, 2/SHOW reveals secrets without connecting, u returns.\n"
+                                 "Unconfigured contracts: browse exchanges/products or search by name/code before connecting.\n"
                                  "Only /data/x_trader_data is used for Tick output. No trading API is linked.\n",
                                  "CTP MdApi 只读采集器。回车、SIGINT 或 SIGTERM 可停止采集并同步文件。\n"
                                  "交互账号菜单：1/START 连接，2/SHOW 查看凭据但不连接，u 返回。\n"
+                                 "未配置合约时：连接前可按交易所/品种浏览，或按名称/代码搜索。\n"
                                  "Tick 输出仅使用 /data/x_trader_data，未链接交易 API。\n");
             return 0;
         }
@@ -106,14 +109,13 @@ int main(int argc, char** argv) {
                 throw std::runtime_error(ui_text("this imported configuration has no contracts; start from an interactive terminal",
                                                 "该导入配置中没有合约，请从交互终端启动"));
             }
-            std::string contracts;
-            std::cout << ui_text("This configuration has no contracts. Enter concrete contracts "
-                                 "(EXCHANGE:instrument, comma separated): ",
-                                 "配置中没有合约。请输入具体合约（EXCHANGE:instrument，逗号分隔）：") << std::flush;
-            if (!std::getline(std::cin, contracts)) {
-                throw std::runtime_error(ui_text("contract selection cancelled", "已取消合约选择"));
+            const auto contracts = seastar::xtrader::cli::run_market_contract_menu(std::cin, std::cout, std::cerr);
+            if (!contracts) {
+                std::cout << ui_text("[CANCELLED] Contract selection cancelled; no connection made.\n",
+                                     "[CANCELLED] 已取消合约选择，未连接服务器。\n");
+                return 0;
             }
-            config.contracts = seastar::xtrader::parse_market_capture_contracts(contracts);
+            config.contracts = *contracts;
             seastar::xtrader::validate_market_capture_config(config);
         }
         if (STOP_REQUESTED) { throw std::runtime_error(ui_text("market capture cancelled before connecting", "已在连接前取消行情采集")); }

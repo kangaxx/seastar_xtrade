@@ -3,6 +3,7 @@
 #include <seastar/xtrader/market_capture_config.hh>
 #include <seastar/xtrader/version.hh>
 #include "cli_language.hh"
+#include "market_contract_menu.hh"
 
 #include <iostream>
 #include <openssl/crypto.h>
@@ -58,6 +59,15 @@ std::string password_prompt(const char* label = ui_text("CTP password (hidden)",
     }
 }
 
+std::vector<seastar::xtrader::market_capture_contract> prompt_contracts() {
+    auto contracts = seastar::xtrader::cli::run_market_contract_menu(std::cin, std::cout, std::cerr);
+    if (!contracts) {
+        throw std::runtime_error(ui_text("contract selection cancelled; no configuration created",
+                                        "已取消合约选择，未创建配置"));
+    }
+    return std::move(*contracts);
+}
+
 void import_config(const char* output, const char* key) {
     if (!::isatty(STDIN_FILENO) || !::isatty(STDOUT_FILENO)) {
         throw std::runtime_error(ui_text("legacy import and plaintext review require an interactive terminal",
@@ -65,9 +75,7 @@ void import_config(const char* output, const char* key) {
     }
     const auto source = prompt(ui_text("Legacy X-Trader INI path (readable regular file)", "旧版 X-Trader INI 路径（可读取的普通文件）"));
     secret_text secret{password_prompt(ui_text("Legacy XTRADER_INI_SECRET (hidden)", "旧版 XTRADER_INI_SECRET（隐藏输入）"))};
-    auto contracts = seastar::xtrader::parse_market_capture_contracts(
-        prompt(ui_text("Concrete contracts, comma separated (EXCHANGE:instrument; no spaces)",
-                       "具体合约，逗号分隔（EXCHANGE:instrument；不含空格）")));
+    auto contracts = prompt_contracts();
     auto config = seastar::xtrader::import_legacy_market_config(source, secret.value, std::move(contracts));
     std::cout << ui_text("[WARN] Legacy XOR has no authentication. A wrong secret can produce plausible text.\n"
                          "The next step displays credentials on this terminal, including passwords. "
@@ -120,9 +128,7 @@ void create_config(const char* output, const char* key, bool initialize = false)
     config.broker_id = prompt("BrokerID");
     config.user_id = prompt("UserID");
     config.password = password_prompt();
-    config.contracts = seastar::xtrader::parse_market_capture_contracts(
-        prompt(ui_text("Concrete contracts, comma separated (EXCHANGE:instrument; no spaces)",
-                       "具体合约，逗号分隔（EXCHANGE:instrument；不含空格）")));
+    config.contracts = prompt_contracts();
     if (initialize) {
         seastar::xtrader::initialize_market_capture_config(config, output, key);
     } else {
@@ -146,8 +152,10 @@ int main(int argc, char** argv) {
                          "xtrader_market_config --import-legacy ENCRYPTED_CONFIG KEY_FILE\n"
                          "xtrader_market_config --import-plaintext SOURCE_INI ENCRYPTED_CONFIG KEY_FILE\n"
                       << ui_text("--initialize creates missing parent directories and creates/reuses an external key.\n"
+                                 "Contract entry supports exchange/product browsing and name/code search; d confirms the list.\n"
                                  "Files are owner-only and never overwritten. Password entry requires a terminal.\n",
                                  "--initialize 创建缺失的父目录，并创建或复用外部密钥。\n"
+                                 "合约输入支持交易所/品种浏览和名称/代码搜索；输入 d 确认列表。\n"
                                  "输出文件仅供所有者访问，不覆盖已有文件。密码输入需要交互终端。\n");
             return 0;
         }

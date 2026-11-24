@@ -3,6 +3,7 @@
 #include <seastar/xtrader/market_capture.hh>
 #include "market_capture_login.hh"
 #include "market_capture_menu.hh"
+#include "market_contract_menu.hh"
 #include "market_tick_writer.hh"
 
 #include <algorithm>
@@ -155,6 +156,108 @@ void ready(market_capture_session& session) {
         session.poll_for(std::chrono::milliseconds(0));
     }
     require(session.is_ready(), "all configured subscriptions acknowledged");
+}
+
+// Product lookup, date formatting and cancellation stay offline and share config validation.
+// Source: CLI product guidance request, 2026-11-24. Signature: GitHub Copilot (gpt-6.1-sol).
+struct contract_menu_result {
+    std::optional<std::vector<market_capture_contract>> contracts;
+    std::string output;
+    std::string errors;
+};
+
+contract_menu_result select_contracts(const std::string& commands) {
+    std::istringstream input(commands);
+    std::ostringstream output, errors;
+    auto contracts = cli::run_market_contract_menu(input, output, errors);
+    return {std::move(contracts), output.str(), errors.str()};
+}
+
+void test_guided_contract_selection() {
+    cli::set_ui_language(cli::ui_language::chinese);
+    const auto chinese = select_contracts("1\n1\n202701\n白银\n202702\n3\n1\n202701\nd\n");
+    require(chinese.contracts && chinese.contracts->size() == 3 && chinese.errors.empty(),
+        "exchange/product numbers and Chinese names can be combined in one selection");
+    require((*chinese.contracts)[0].exchange == "SHFE" && (*chinese.contracts)[0].instrument == "rb2701"
+        && (*chinese.contracts)[1].instrument == "ag2702"
+        && (*chinese.contracts)[2].exchange == "CZCE" && (*chinese.contracts)[2].instrument == "SA701",
+        "year/month entry generates correct exchange, case and CZCE three-digit suffix");
+    require(chinese.output.find("上海期货交易所") != std::string::npos
+        && chinese.output.find("白银") != std::string::npos
+        && chinese.output.find("不是实时挂牌清单") != std::string::npos,
+        "Chinese guidance shows readable names and does not claim a live contract catalog");
+    cli::set_ui_language(cli::ui_language::english);
+    const auto english = select_contracts("RB2701\nm2705\nsa701\nif2703\nsc2701\nLC2701\nd\n");
+    require(english.contracts && english.contracts->size() == 6 && english.errors.empty(),
+        "full contracts infer all six exchanges without an exchange code");
+    const std::string exchanges[] = {"SHFE", "DCE", "CZCE", "CFFEX", "INE", "GFEX"};
+    const std::string instruments[] = {"rb2701", "m2705", "SA701", "IF2703", "sc2701", "lc2701"};
+    for (std::size_t index = 0; index < 6; ++index) {
+        require((*english.contracts)[index].exchange == exchanges[index]
+            && (*english.contracts)[index].instrument == instruments[index], "CTP symbol case is canonical");
+    }
+    const auto search = select_contracts("copp\nInternational copper\n202701\nd\n");
+    require(search.contracts && search.contracts->size() == 1
+        && search.contracts->front().exchange == "INE" && search.contracts->front().instrument == "bc2701",
+        "ambiguous product search is resolved explicitly instead of guessing an exchange");
+    const auto browse = select_contracts("2\n999\n豆粕\n202705\n4\nIF\n202703\n5\n原油\n202701\n6\nlc\n202701\nd\n");
+    require(browse.contracts && browse.contracts->size() == 4
+        && browse.errors.find("[ERROR]") != std::string::npos,
+        "all exchange browsers accept names/codes and allow correcting invalid choices");
+    const auto multiple = select_contracts("SHFE:ag2701,GFEX:custom2701\nr\nm\n202705\nd\n");
+    require(multiple.contracts && multiple.contracts->size() == 2 && multiple.errors.empty()
+        && multiple.contracts->front().instrument == "ag2701"
+        && multiple.contracts->back().instrument == "m2705",
+        "explicit legacy pairs including unlisted products remain available, with undo");
+}
+
+void test_contract_selection_errors() {
+    const auto corrected = select_contracts("d\nr\nunknown\nRB2713\nrb\n202713\n202700\n2701\n202701\n"
+        "SHFE:ag2701,SHFE:rb2701\nDCE:m2701,\nBAD:m2701\nrb2701\nag2701\nd\n");
+    require(corrected.contracts && corrected.contracts->size() == 2
+        && corrected.contracts->front().instrument == "rb2701"
+        && corrected.contracts->back().instrument == "ag2701",
+        "invalid month, unknown exchange, malformed pairs and duplicates cannot corrupt the selected list");
+    require(corrected.errors.find("[ERROR]") != std::string::npos, "invalid choices are visible and retryable");
+    for (const std::string commands : {"", "u\n", "rb2701\nu\n", "rb2701\n",
+            "1\nu\nu\n", "rb\nu\nu\n", "rb\n", "1\n"}) {
+        require(!select_contracts(commands).contracts,
+            "EOF or cancel anywhere cannot commit even a partially selected contract list");
+    }
+    std::string full;
+    for (unsigned index = 0; index < 64; ++index) { full += "GFEX:custom" + std::to_string(index) + "\n"; }
+    const auto limited = select_contracts(full + "GFEX:overflow\nr\nGFEX:replacement\nd\n");
+    require(limited.contracts && limited.contracts->size() == 64
+        && limited.contracts->back().instrument == "replacement"
+        && limited.errors.find("64") != std::string::npos,
+        "shared 64-contract limit rejects additions atomically and allows correction");
+    validate_market_capture_contracts({});
+}
+
+void test_contract_selection_to_tick(const fs::path& root) {
+    fixture files(root);
+    const auto key = root / "key";
+    const auto encrypted = root / "config.enc";
+    auto unbound = config();
+    unbound.contracts.clear();
+    initialize_market_capture_config(unbound, encrypted, key);
+    const auto original = read(encrypted);
+    auto account = load_market_capture_config(encrypted, key);
+    auto selection = select_contracts("螺纹钢\n202701\nd\n");
+    require(selection.contracts.has_value(), "guided contracts are explicitly committed before SDK startup");
+    account.contracts = std::move(*selection.contracts);
+    validate_market_capture_config(account);
+    fake_md_api api;
+    market_capture_session session(std::move(account), files.paths, root / "state", files.factory(api));
+    ready(session);
+    api.send(tick());
+    session.poll_for(std::chrono::milliseconds(0));
+    session.stop();
+    require(api.subscriptions == std::vector<std::string>{"rb2701"}
+        && session.ticks_written() == 1 && fs::exists(files.output("rb2701", "20261113")),
+        "guided product maps to the actual SDK subscription and shared Tick writer");
+    require(read(encrypted) == original && load_market_capture_config(encrypted, key).contracts.empty(),
+        "runtime selection never rewrites encrypted account credentials or saved contracts");
 }
 
 void test_bilingual_login_menu() {
@@ -926,6 +1029,9 @@ int main() {
     const fs::path root(created);
     try {
         cli::set_ui_language(cli::ui_language::english);
+        test_guided_contract_selection();
+        test_contract_selection_errors();
+        test_contract_selection_to_tick(root / "contract_selection");
         test_bilingual_login_menu();
         test_login_review();
         test_login_review_cancellation();

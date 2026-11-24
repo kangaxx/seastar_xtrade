@@ -48,6 +48,7 @@ struct market_capture_config {
 };
 
 void validate_market_capture_config(const market_capture_config& config);
+void validate_market_capture_contracts(const std::vector<market_capture_contract>& contracts);
 std::vector<market_capture_contract> parse_market_capture_contracts(const std::string& text);
 market_capture_config import_legacy_market_config(const std::filesystem::path& ini_file,
                                                   const std::string& secret,

@@ -285,6 +285,22 @@ std::vector<market_capture_contract> parse_market_capture_contracts(const std::s
     return contracts;
 }
 
+void validate_market_capture_contracts(const std::vector<market_capture_contract>& contracts) {
+    if (contracts.size() > 64) {
+        throw std::invalid_argument("configure no more than 64 concrete futures contracts");
+    }
+    const std::set<std::string> exchanges{"SHFE", "DCE", "CZCE", "CFFEX", "INE", "GFEX"};
+    std::set<std::string> instruments;
+    const market_data_paths paths;
+    for (const auto& contract : contracts) {
+        if (!exchanges.contains(contract.exchange) || contract.instrument.size() > 80
+                || !instruments.insert(contract.instrument).second) {
+            throw std::invalid_argument("invalid exchange, duplicate instrument or instrument too long");
+        }
+        (void)paths.dataset_directory({"x_trader_data", "futures", contract.exchange, contract.instrument, "tick"});
+    }
+}
+
 void validate_market_capture_config(const market_capture_config& config) {
     require_text(config.broker_id, 10, "broker_id");
     require_text(config.user_id, 15, "user_id");
@@ -307,19 +323,7 @@ void validate_market_capture_config(const market_capture_config& config) {
     if (parsed.ec != std::errc{} || parsed.ptr != end || port == 0 || port > 65535) {
         throw std::invalid_argument("market_front requires a valid TCP port");
     }
-    if (config.contracts.size() > 64) {
-        throw std::invalid_argument("configure no more than 64 concrete futures contracts");
-    }
-    const std::set<std::string> exchanges{"SHFE", "DCE", "CZCE", "CFFEX", "INE", "GFEX"};
-    std::set<std::string> instruments;
-    const market_data_paths paths;
-    for (const auto& contract : config.contracts) {
-        if (!exchanges.contains(contract.exchange) || contract.instrument.size() > 80
-                || !instruments.insert(contract.instrument).second) {
-            throw std::invalid_argument("invalid exchange, duplicate instrument or instrument too long");
-        }
-        (void)paths.dataset_directory({"x_trader_data", "futures", contract.exchange, contract.instrument, "tick"});
-    }
+    validate_market_capture_contracts(config.contracts);
     if (config.trader) {
         const auto& trader = *config.trader;
         require_text(trader.trade_front, 255, "trade_front");
