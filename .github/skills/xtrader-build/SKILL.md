@@ -34,20 +34,20 @@
 - IP：`47.98.20.225`
 - SSH 用户：`root`
 - 仓库路径：`/root/seastar`
-- Lenovo 笔记本上的 PuTTY 私钥路径：`C:\Users\15821\.ssh\hangzhou.ppk`
+- Lenovo 笔记本上的 PuTTY 私钥路径：`C:\Users\{current user}\.ssh\hangzhou.ppk`（`{current user}` 表示当前 Windows 用户的用户文件夹）
 - Windows SSH 工具：`C:\Program Files\PuTTY\plink.exe`
 - 历史系统记录：Ubuntu 24.04.3 LTS；远端连接和构建状态执行前需重新确认。
 
 在 Lenovo 笔记本 PowerShell 上连接：
 
 ```powershell
-& "C:\Program Files\PuTTY\plink.exe" -i "C:\Users\15821\.ssh\hangzhou.ppk" -batch root@47.98.20.225 "echo CLOUD_L_OK; uname -a; whoami"
+& "C:\Program Files\PuTTY\plink.exe" -i "C:\Users\{current user}\.ssh\hangzhou.ppk" -batch root@47.98.20.225 "echo CLOUD_L_OK; uname -a; whoami"  # {current user} 表示当前 Windows 用户的用户文件夹
 ```
 
 云服务器的 Release 编译按该机当前仓库和脚本执行，不要把 VBox 的 SSH 别名或 `/home/vboxuser/workspace/seastar` 路径用于云服务器：
 
 ```powershell
-& "C:\Program Files\PuTTY\plink.exe" -i "C:\Users\15821\.ssh\hangzhou.ppk" -batch root@47.98.20.225 "cd /root/seastar && JOBS=1 bash ./build_release.sh"
+& "C:\Program Files\PuTTY\plink.exe" -i "C:\Users\{current user}\.ssh\hangzhou.ppk" -batch root@47.98.20.225 "cd /root/seastar && JOBS=1 bash ./build_release.sh"  # {current user} 表示当前 Windows 用户的用户文件夹
 ```
 
 以上云服务器信息来源于基于 Lenovo 笔记本的项目记录；若连接失败或环境与记录不一致，先核实当前配置，不要自动重启服务或改动服务器。
