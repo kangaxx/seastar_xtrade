@@ -1,0 +1,16 @@
+# /etc/systemd/system/ctp-md-health.timer
+# Minute-by-minute health check: starts the service when a session is due
+# (covers boot catch-up and missed timers), restarts it when the daemon loop
+# stalls, login/subscribe never completes, or ticks stop inside a tick window.
+# Restarts are rate-limited by the script (RESTART_LIMIT_PER_HOUR).
+[Unit]
+Description=Health check for CTP market data capture
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=false
+RandomizedDelaySec=0
+Unit=ctp-md-ctl@health.service
+
+[Install]
+WantedBy=timers.target

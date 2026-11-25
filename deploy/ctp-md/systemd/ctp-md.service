@@ -1,0 +1,55 @@
+# /etc/systemd/system/ctp-md.service
+# CTP market data capture daemon (X-Trader). Started/stopped by the scheduler
+# timers and the health check; do NOT enable this unit unless continuous
+# capture (weekends included) is wanted.
+[Unit]
+Description=CTP market data capture daemon (X-Trader)
+After=network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=xtrader
+Group=xtrader
+Environment=TZ=Asia/Shanghai
+Environment=XTRADER_MARKET_STATE_DIR=/var/lib/xtrader/market
+Environment=XTRADER_CTP_MD_PID=/run/xtrader/ctp-md.pid
+EnvironmentFile=-/etc/xtrader/ctp-md.env
+ExecStart=/opt/xtrader/bin/xtrader_market_capture --daemon-tick \
+    --config /etc/xtrader/market.enc --key-file /etc/xtrader/market.key
+ExecStop=/bin/kill -s TERM $MAINPID
+Restart=on-failure
+RestartSec=5
+# exit 10 = pid lock held by another instance: restarting would never help
+RestartPreventExitStatus=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+TimeoutStopSec=45
+KillSignal=SIGTERM
+RuntimeDirectory=xtrader
+RuntimeDirectoryMode=0755
+StateDirectory=xtrader
+StateDirectoryMode=0750
+LogsDirectory=xtrader
+LogsDirectoryMode=0750
+UMask=0027
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+ReadWritePaths=/data/x_trader_data
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ctp-md
+
+[Install]
+WantedBy=multi-user.target

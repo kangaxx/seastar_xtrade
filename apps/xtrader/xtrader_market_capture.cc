@@ -3,12 +3,13 @@
 #include <seastar/xtrader/market_capture.hh>
 #include <seastar/xtrader/version.hh>
 #include <ThostFtdcMdApi.h>
+#include "market_capture_daemon.hh"
 #include "market_capture_login.hh"
+#include "market_capture_runtime.hh"
 #include "market_contract_menu.hh"
 #include "xtrader_log.hh"
 
 #include <cerrno>
-#include <csignal>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -16,29 +17,16 @@
 #include <string>
 #include <system_error>
 #include <poll.h>
-#include <sys/prctl.h>
 #include <unistd.h>
 
 namespace {
 
+using seastar::xtrader::cli::install_signals;
+using seastar::xtrader::cli::state_directory;
+using seastar::xtrader::cli::stop_requested;
 using seastar::xtrader::cli::ui_text;
 
 namespace xlog = seastar::xtrader::log;
-
-volatile std::sig_atomic_t STOP_REQUESTED = 0;
-
-void request_stop(int) { STOP_REQUESTED = 1; }
-
-std::filesystem::path state_directory() {
-    if (const char* path = std::getenv("XTRADER_MARKET_STATE_DIR"); path && *path) { return path; }
-    if (const char* path = std::getenv("XDG_STATE_HOME"); path && *path) {
-        return std::filesystem::path(path) / "xtrader" / "market";
-    }
-    if (const char* home = std::getenv("HOME"); home && *home) {
-        return std::filesystem::path(home) / ".local" / "state" / "xtrader" / "market";
-    }
-    throw std::runtime_error("set HOME, XDG_STATE_HOME or XTRADER_MARKET_STATE_DIR");
-}
 
 bool terminal_stop() {
     if (!::isatty(STDIN_FILENO)) { return false; }
@@ -58,29 +46,13 @@ bool terminal_stop() {
     return false;
 }
 
-void install_signals() {
-    struct sigaction action{};
-    action.sa_handler = request_stop;
-    ::sigemptyset(&action.sa_mask);
-    if (::sigaction(SIGINT, &action, nullptr) != 0 || ::sigaction(SIGTERM, &action, nullptr) != 0
-            || ::sigaction(SIGHUP, &action, nullptr) != 0) {
-        throw std::system_error(errno, std::generic_category(), "install stop signal handlers");
-    }
-    action.sa_handler = SIG_IGN;
-    if (::sigaction(SIGPIPE, &action, nullptr) != 0) {
-        throw std::system_error(errno, std::generic_category(), "configure output failure handling");
-    }
-    const auto parent = ::getppid();
-    if (::prctl(PR_SET_PDEATHSIG, SIGTERM) != 0) {
-        throw std::system_error(errno, std::generic_category(), "watch launcher lifetime");
-    }
-    if (::getppid() != parent) { STOP_REQUESTED = 1; }
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
     xlog::initialize("xtrader_market_capture");
+    if (argc >= 2 && std::string(argv[1]) == "--daemon-tick") {
+        return seastar::xtrader::cli::run_market_capture_daemon(argc, argv);
+    }
     std::unique_ptr<seastar::xtrader::market_capture_session> session;
     try {
         (void)seastar::xtrader::cli::current_ui_language();
@@ -127,7 +99,7 @@ int main(int argc, char** argv) {
             xlog::info("contracts selected interactively=" + std::to_string(config.contracts.size()));
             seastar::xtrader::validate_market_capture_config(config);
         }
-        if (STOP_REQUESTED) { throw std::runtime_error(ui_text("market capture cancelled before connecting", "已在连接前取消行情采集")); }
+        if (stop_requested()) { throw std::runtime_error(ui_text("market capture cancelled before connecting", "已在连接前取消行情采集")); }
         const seastar::xtrader::market_data_paths data_paths;
         const auto state_dir = state_directory();
         xlog::info("data_root=" + data_paths.source_root().string() + " state_dir=" + state_dir.string());
@@ -152,7 +124,7 @@ int main(int argc, char** argv) {
         auto next_status = std::chrono::steady_clock::now();
         // One compact heartbeat per minute; per-second status stays on the console only.
         auto next_heartbeat = next_status + std::chrono::seconds(60);
-        while (!STOP_REQUESTED && !terminal_stop()) {
+        while (!stop_requested() && !terminal_stop()) {
             session->poll_for(std::chrono::milliseconds(100));
             const auto now = std::chrono::steady_clock::now();
             if (now >= next_status) {

@@ -1,0 +1,15 @@
+# /etc/systemd/system/ctp-md-stop-night.timer
+# 23:05 night-session stop. Products that keep trading past 23:00 (SHFE gold,
+# silver, crude, base metals) need NIGHT windows extended in /etc/xtrader/ctp-md.env
+# and the optional ctp-md-stop-night-late.timer instead.
+[Unit]
+Description=Night-session close stop for CTP market data capture
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 23:05:00 Asia/Shanghai
+Persistent=false
+RandomizedDelaySec=0
+Unit=ctp-md-ctl@stop-night.service
+
+[Install]
+WantedBy=timers.target

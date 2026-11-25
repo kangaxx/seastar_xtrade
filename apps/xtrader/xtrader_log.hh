@@ -27,6 +27,7 @@ struct state {
     std::string path;
     bool initialized = false;
     bool warned = false;
+    bool mirror = false;
 };
 
 inline state& state_instance() {
@@ -70,7 +71,7 @@ inline std::string timestamp() {
 
 inline void write_line(state& current, const char* level, std::string_view message) {
     std::lock_guard<std::mutex> lock(current.guard);
-    if (current.stream == nullptr) {
+    if (current.stream == nullptr && !current.mirror) {
         if (!current.warned) {
             current.warned = true;
             std::fprintf(stderr, "[WARN] runtime log file unavailable; continuing with console output only\n");
@@ -79,8 +80,15 @@ inline void write_line(state& current, const char* level, std::string_view messa
     }
     const auto line = timestamp() + " [" + level + "] pid=" + std::to_string(::getpid())
         + " " + std::string(message) + "\n";
-    (void)std::fwrite(line.data(), 1, line.size(), current.stream);
-    (void)std::fflush(current.stream);
+    if (current.stream != nullptr) {
+        (void)std::fwrite(line.data(), 1, line.size(), current.stream);
+        (void)std::fflush(current.stream);
+    }
+    if (current.mirror) {
+        // Daemon mode mirrors every line to stderr so systemd journald captures it.
+        (void)std::fwrite(line.data(), 1, line.size(), stderr);
+        (void)std::fflush(stderr);
+    }
 }
 
 } // namespace detail
@@ -116,6 +124,14 @@ inline std::string file_path() {
     auto& current = detail::state_instance();
     std::lock_guard<std::mutex> lock(current.guard);
     return current.path;
+}
+
+// Mirror every log line to stderr (journald capture); affects lines written
+// after the call and never disables file logging.
+inline void mirror_to_stderr(bool enable) {
+    auto& current = detail::state_instance();
+    std::lock_guard<std::mutex> lock(current.guard);
+    current.mirror = enable;
 }
 
 inline void info(std::string_view message) { detail::write_line(detail::state_instance(), "INFO", message); }

@@ -1,0 +1,15 @@
+# /etc/systemd/system/ctp-md-start-day.timer
+# 08:30 trading-day check for the day session. The script validates the trading
+# calendar, so weekends/holidays are no-ops. Persistent=false: a missed 08:30
+# trigger (machine off) never fires late; the health check covers boot catch-up.
+[Unit]
+Description=Day-session start check for CTP market data capture
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08:30:00 Asia/Shanghai
+Persistent=false
+RandomizedDelaySec=0
+Unit=ctp-md-ctl@start-day.service
+
+[Install]
+WantedBy=timers.target

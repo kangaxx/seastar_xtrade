@@ -1,0 +1,13 @@
+# /etc/systemd/system/ctp-md-ctl@.service
+# Oneshot template the timers instantiate with %i = scheduler action.
+[Unit]
+Description=CTP market data scheduler action %i
+
+[Service]
+Type=oneshot
+Environment=TZ=Asia/Shanghai
+EnvironmentFile=-/etc/xtrader/ctp-md.env
+ExecStart=/usr/local/libexec/ctp-md/ctp_session_ctl.sh %i
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ctp-md-ctl

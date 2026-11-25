@@ -120,7 +120,10 @@ target_include_directories(xtrader_market_capture_core PUBLIC ${CMAKE_SOURCE_DIR
 target_include_directories(xtrader_market_capture_core SYSTEM PRIVATE ${CTP_API_DIR})
 target_link_libraries(xtrader_market_capture_core PUBLIC OpenSSL::Crypto Threads::Threads)
 
-add_executable(app_xtrader_market_capture xtrader_market_capture.cc)
+add_executable(app_xtrader_market_capture
+    xtrader_market_capture.cc
+    market_capture_daemon.cc
+    market_capture_runtime.cc)
 target_include_directories(app_xtrader_market_capture SYSTEM PRIVATE ${CTP_API_DIR})
 target_link_libraries(app_xtrader_market_capture PRIVATE
     xtrader_market_capture_core "${CTP_API_DIR}/libthostmduserapi_se.so")

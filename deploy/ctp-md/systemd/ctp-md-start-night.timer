@@ -1,0 +1,14 @@
+# /etc/systemd/system/ctp-md-start-night.timer
+# 20:30 night-session check. The script skips evenings without a night session
+# (holiday eves and weekends), including 节前无夜盘 days.
+[Unit]
+Description=Night-session start check for CTP market data capture
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 20:30:00 Asia/Shanghai
+Persistent=false
+RandomizedDelaySec=0
+Unit=ctp-md-ctl@start-night.service
+
+[Install]
+WantedBy=timers.target

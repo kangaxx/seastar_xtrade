@@ -1,0 +1,15 @@
+# /etc/systemd/system/ctp-md-calendar-check.timer
+# Weekly reminder that the trading calendar is about to expire. The exchanges
+# publish next year's schedule in December; without an update the scheduler
+# fails closed (no starts) once coverage_until passes.
+[Unit]
+Description=Weekly trading calendar coverage check
+
+[Timer]
+OnCalendar=Mon *-*-* 08:10:00 Asia/Shanghai
+Persistent=false
+RandomizedDelaySec=0
+Unit=ctp-md-ctl@calendar-check.service
+
+[Install]
+WantedBy=timers.target

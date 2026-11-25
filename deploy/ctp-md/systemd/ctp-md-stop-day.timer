@@ -1,0 +1,13 @@
+# /etc/systemd/system/ctp-md-stop-day.timer
+# 15:35 day-session close stop (after the 15:15 settlement window).
+[Unit]
+Description=Day-session close stop for CTP market data capture
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 15:35:00 Asia/Shanghai
+Persistent=false
+RandomizedDelaySec=0
+Unit=ctp-md-ctl@stop-day.service
+
+[Install]
+WantedBy=timers.target
