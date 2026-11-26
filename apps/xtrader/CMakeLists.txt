@@ -33,6 +33,10 @@ configure_file(
     ${XTRADER_VERSION_INCLUDE_DIR}/seastar/xtrader/version.hh
     @ONLY)
 
+# 独立业务策略库：策略源码独立存放于 strategies/，仅依赖策略框架，不依赖回测引擎。
+# Source: user request, 2026-11-27.
+add_subdirectory(../../strategies ${CMAKE_CURRENT_BINARY_DIR}/strategies)
+
 seastar_add_app(xtrader_demo SOURCES
     xtrader_demo.cc
     ../../src/xtrader/domain_types.cc
