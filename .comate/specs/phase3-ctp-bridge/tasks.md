@@ -37,6 +37,27 @@
 - [x] 3.5.4 添加配置验证
 
 ## 3.6 编译验证
-- [ ] 3.6.1 cmake 配置通过
-- [ ] 3.6.2 ninja 编译通过
-- [ ] 3.6.3 修复编译错误（如有）
+- [x] 3.6.1 cmake 配置通过
+- [x] 3.6.2 ninja 编译通过
+- [x] 3.6.3 修复编译错误（如有）
+
+> 2026-11-27 编译验证记录（VBox `xtrader-vbox`，Ubuntu 22.04，4 vCPU / 5 GB 内存）
+>
+> - 代码基线：`daemon-mode-m0m1` @ `a6e017d`（由 Windows 本地库整树同步至
+>   `/home/vboxuser/workspace/seastar_xtrade`，`git status` 干净，抽样 md5 与本地一致）。
+> - 配置：`BOOST_ROOT=/usr/local CMAKE_PREFIX_PATH=/usr/local`，`--mode=release`，沿用既有
+>   `build/release`（含 238 MB `libseastar.a` 与 106 个 seastar 目标文件，无需全量重编）。
+>   配置输出 `Build files have been written to: .../build/release`，退出码 0。
+> - `ninja -C build/release -j2 app_xtrader_cli`：**22/22 通过**，0 error；
+>   产物 `xtrader_cli` 107 MB、`xtrader_market_capture` 7.4 MB、`xtrader_market_config` 3.4 MB。
+> - `ninja -C build/release -j2 app_xtrader_demo`：**38/38 通过**，0 error；
+>   产物 `xtrader_demo` 142 MB（`ELF 64-bit LSB pie executable`）。
+> - 运行验证：三个可执行文件 `--help` 均返回 0，版本行输出
+>   `X-Trader Seastar Trading Engine v0.1.3.unknown.release` 且 `Git: a6e017d` 正确。
+> - 构建日志：`/home/vboxuser/build_logs/vm_cli_build.log`、
+>   `/home/vboxuser/build_logs/vm_demo_build.log`。
+> - 已知无害告警：GnuTLS 3.7.3 低于要求的 3.7.4（OpenSSL 3.0.2 可用）；
+>   `/var/log/xtrader` 无写权限（普通用户运行，非 root）；
+>   `release-build-info/xtrader-build-info.txt` 未生成（版本号显示 `unknown`）。
+> - 说明：本记录仅证明「可配置、可编译、可启动、`--help` 可用」，
+>   **不构成功能验收**（未连接 CTP 柜台、未订阅行情、未发单）。
