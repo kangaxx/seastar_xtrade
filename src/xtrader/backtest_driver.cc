@@ -403,7 +403,8 @@ void backtest_driver::load_historical_data(const sstring& instrument_id) {
     }
 
     std::vector<historical_bar> bars;
-    if (!manager.load_bars(*selected, bars, &warning, historical_load_mode::strict)) {
+    if (!manager.load_bars(*selected, bars, &warning, historical_load_mode::strict,
+                           std::string(_cfg.start_date), std::string(_cfg.end_date))) {
         throw std::runtime_error(warning);
     }
     std::vector<replay_record> records;

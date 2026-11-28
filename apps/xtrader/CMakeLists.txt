@@ -102,14 +102,37 @@ seastar_add_app(xtrader_cli SOURCES
     ../../src/xtrader/data_importer.cc
     ../../src/xtrader/market_data_writer.cc
     ../../src/xtrader/historical_data_manager.cc
-    ../../src/xtrader/redis_sync_client.cc)
+    ../../src/xtrader/redis_sync_client.cc
+    # 回测引擎依赖（B3 offline strategy replay + backtest driver）
+    ../../src/xtrader/domain_types.cc
+    ../../src/xtrader/strategy_base.cc
+    ../../src/xtrader/strategy_lifecycle.cc
+    ../../src/xtrader/subscription_registry.cc
+    ../../src/xtrader/event_bus.cc
+    ../../src/xtrader/order_intent.cc
+    ../../src/xtrader/backtest_driver.cc
+    ../../src/xtrader/simulated_order_book.cc
+    ../../src/xtrader/position_ledger.cc
+    ../../src/xtrader/offline_fund_ledger.cc
+    ../../src/xtrader/offline_account_ledger.cc
+    ../../src/xtrader/offline_futures_economics.cc
+    ../../src/xtrader/offline_futures_account.cc
+    ../../src/xtrader/offline_simulated_execution.cc
+    ../../src/xtrader/offline_bar_timeline.cc
+    ../../src/xtrader/offline_bar_replay.cc
+    ../../src/xtrader/offline_bar_strategy_replay.cc
+    ../../src/xtrader/backtest_report.cc
+    ../../src/xtrader/performance_metrics.cc
+    ../../src/xtrader/strategy_registry.cc)
 
 target_include_directories(app_xtrader_cli PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src/xtrader)
 
-target_link_libraries(app_xtrader_cli PRIVATE hiredis)
+# 策略静态库链接进主程序，菜单通过编译期注册表枚举策略。
+# 分钟线转日线工具作为独立 SO 链接，菜单直接调用其 C ABI。
+target_link_libraries(app_xtrader_cli PRIVATE hiredis xtrader_strategies xtrader_minute_to_daily)
 
 # Read-only collector runs outside the reactor and links MdApi only.
 # Source: user request, 2026-11-13. Signature: GitHub Copilot (Auto).

@@ -28,6 +28,7 @@ public:
     future<> on_market_data(strategy_context& ctx, const domain::market_data& md) override;
     future<> on_bar(strategy_context& ctx, const domain::bar_data& bar) override;
     future<> on_stop(strategy_context& ctx, const sstring& reason) override;
+    std::string get_info() const override;
 
 private:
     // 指标计算（基于已收盘的历史 bar，不含当前 bar）

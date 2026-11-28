@@ -99,6 +99,14 @@ public:
     virtual future<> on_timer(strategy_context& ctx) { return make_ready_future<>(); }
     virtual future<> on_stop(strategy_context& ctx, const sstring& reason) { return make_ready_future<>(); }
 
+    // 返回策略元信息 JSON 字符串，供菜单枚举与展示使用。
+    // 当前约定字段：name（策略名）、backtest_support（是否支持回测）、is_intraday（是否日内策略）。
+    // 使用 std::string 返回，跨动态库边界更安全；默认实现保证旧策略/测试策略无需改动。
+    virtual std::string get_info() const {
+        const std::string name(_config.strategy_name.data(), _config.strategy_name.size());
+        return "{\"name\":\"" + name + "\",\"backtest_support\":false,\"is_intraday\":false}";
+    }
+
 protected:
     strategy_config _config;
     strategy_state _state = strategy_state::created;

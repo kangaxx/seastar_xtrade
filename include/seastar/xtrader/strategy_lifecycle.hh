@@ -45,6 +45,10 @@ struct strategy_context {
     std::function<future<>()> subscribe_bar_data;
     subscription_registry* sub_registry = nullptr;
 
+    // 适配器数据粒度：true = 逐笔 tick（实盘 CTP），false = 已聚合的 bar（回测）。
+    // 策略据此选择订阅方式，不感知回测/实盘本身。
+    bool tick_market_data = false;
+
     domain::instrument_spec spec;
 };
 

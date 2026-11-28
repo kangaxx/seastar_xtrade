@@ -16,6 +16,8 @@
 
 #include "data_source_menu.hh"
 
+#include <seastar/xtrader/strategy_registry.hh>
+
 #include <algorithm>
 #include <cctype>
 #include <functional>
@@ -33,6 +35,31 @@ struct backtest_selection {
     std::vector<std::filesystem::path> data_files;
     std::string strategy_id;
 };
+
+// 从约定的 JSON 字符串里提取 "key":"value" 形式的字符串字段。
+inline std::string json_string_field(const std::string& json, const std::string& key) {
+    const std::string needle = "\"" + key + "\":\"";
+    const auto pos = json.find(needle);
+    if (pos == std::string::npos) {
+        return {};
+    }
+    const auto value_begin = pos + needle.size();
+    const auto value_end = json.find('"', value_begin);
+    if (value_end == std::string::npos) {
+        return {};
+    }
+    return json.substr(value_begin, value_end - value_begin);
+}
+
+// 从约定的 JSON 字符串里提取 "key":true/false 形式的布尔字段。
+inline bool json_bool_field(const std::string& json, const std::string& key) {
+    const std::string needle = "\"" + key + "\":";
+    const auto pos = json.find(needle);
+    if (pos == std::string::npos) {
+        return false;
+    }
+    return json.compare(pos + needle.size(), 4, "true") == 0;
+}
 
 inline std::string backtest_placeholder_result() {
     return ui_text("Under construction", "施工中");
@@ -179,18 +206,42 @@ inline void select_files(const market_data_paths& paths, backtest_selection& sel
 
 inline void select_strategy(backtest_selection& selection, std::istream& input,
                             std::ostream& output, std::ostream& errors) {
-    if (choose(ui_text("[Strategies]", "[策略]"),
-               {ui_text("Virtual (placeholder; no trading logic)", "Virtual（占位项，无交易逻辑）")}, false,
-               input, output, errors)) {
-        selection.strategy_id = "Virtual";
+    const auto& registry = seastar::xtrader::strategy_registry::instance();
+    const auto keys = registry.keys();
+    if (keys.empty()) {
+        output << ui_text("[WARN] No strategies registered.\n", "[WARN] 没有已注册的策略。\n");
+        return;
     }
+    std::vector<std::string> ids;
+    std::vector<std::string> labels;
+    for (const auto& key : keys) {
+        auto strategy = registry.create(key);
+        if (!strategy) {
+            continue;
+        }
+        const auto info = strategy->get_info();
+        const auto name = json_string_field(info, "name");
+        const bool backtest = json_bool_field(info, "backtest_support");
+        const bool intraday = json_bool_field(info, "is_intraday");
+        ids.push_back(key);
+        labels.push_back((name.empty() ? key : name) + " (" + key + ")"
+            + (backtest ? "" : ui_text(", no backtest", "，不支持回测"))
+            + (intraday ? ui_text(", intraday", "，日内") : ""));
+    }
+    const auto choice = choose(ui_text("[Strategies]", "[策略]"), labels, false, input, output, errors);
+    if (!choice) {
+        return;
+    }
+    const auto& key = ids[choice->front()];
+    selection.strategy_id = key;
+    output << ui_text("[OK] Strategy: ", "[OK] 策略：") << key << '\n';
 }
 
 inline void require_ready(const market_data_paths& paths, const backtest_selection& selection) {
     require_source(paths, selection);
-    if (selection.data_files.empty() || selection.strategy_id != "Virtual") {
-        throw std::invalid_argument(ui_text("select data files and the Virtual strategy before Run",
-                                           "运行前请先选择数据文件和 Virtual 策略"));
+    if (selection.data_files.empty() || selection.strategy_id.empty()) {
+        throw std::invalid_argument(ui_text("select data files and a strategy before Run",
+                                           "运行前请先选择数据文件和策略"));
     }
     for (const auto& file : selection.data_files) {
         if (!std::filesystem::is_regular_file(std::filesystem::symlink_status(file))) {
@@ -211,17 +262,17 @@ inline void run_backtest_menu(const market_data_paths& paths, std::istream& inpu
     backtest_selection selection{paths.source_root(), {}, {}, {}};
     std::string line;
     while (true) {
-        output << ui_text("\n[Backtest Setup - execution under construction]\nData root: ",
-                          "\n[回测设置 - 执行功能尚未完成]\n数据目录：")
+        output << ui_text("\n[Backtest Setup]\nData root: ",
+                          "\n[回测设置]\n数据目录：")
                << selection.data_root.string() << ui_text("\nProduct type: ", "\n产品类型：")
                << (selection.product_directory.empty() ? ui_text("(all)", "（全部）") : selection.product_directory.filename().string())
                << ui_text("\nFiles: ", "\n文件数：") << selection.data_files.size()
                << ui_text("\nStrategy: ", "\n策略：")
                << (selection.strategy_id.empty() ? ui_text("(not selected)", "（未选择）") : selection.strategy_id)
                << ui_text("\n1) Select data source\n2) Select product type\n3) Select data files\n"
-                          "4) Select strategy\n5) Run (under construction)\nu) Back\nSelect: ",
+                          "4) Select strategy\n5) Run\nu) Back\nSelect: ",
                           "\n1) 选择数据来源\n2) 选择产品类型\n3) 选择数据文件\n"
-                          "4) 选择策略\n5) 运行（尚未完成）\nu) 返回\n选择：") << std::flush;
+                          "4) 选择策略\n5) 运行\nu) 返回\n选择：") << std::flush;
         if (!std::getline(input, line) || line == "u" || line == "back") {
             return;
         }

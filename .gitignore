@@ -25,3 +25,6 @@ compile_commands.json
 
 # 构建生成的版本头文件（由 CMake 从 version.hh.in 生成，位于源码 include 树属构建残留）
 include/seastar/xtrader/version.hh
+
+# 回测报告为运行时生成产物
+/exports/backtest/

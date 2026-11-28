@@ -4,10 +4,15 @@
 #include <seastar/core/app-template.hh>
 #include <seastar/core/thread.hh>
 #include <seastar/xtrader/backtest_driver.hh>
+#include <seastar/xtrader/backtest_report.hh>
 #include <seastar/xtrader/data_importer.hh>
 #include <seastar/xtrader/historical_data_manager.hh>
+#include <seastar/xtrader/offline_bar_strategy_replay.hh>
+#include <seastar/xtrader/offline_futures_economics.hh>
 #include <seastar/xtrader/redis_sync_client.hh>
+#include <seastar/xtrader/strategy_registry.hh>
 #include <seastar/xtrader/version.hh>
+#include <xtrader/minute_to_daily.h>
 
 #include "data_source_menu.hh"
 #include "backtest_menu.hh"
@@ -18,9 +23,13 @@
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <set>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <unistd.h>
@@ -214,22 +223,414 @@ void run_heartbeat_test() {
     redis.disconnect();
 }
 
-// Run receives the configured selection but deliberately does not start a driver.
-// Source: user request, 2026-11-13. Signature: GitHub Copilot (Auto).
-std::string run_backtest(const seastar::xtrader::backtest_config&) {
-    return seastar::xtrader::cli::backtest_placeholder_result();
+// 将 epoch 纳秒时间戳反推回 calendar_date(YYYYMMDD) + time(HH:MM:SS)。
+// 与 backtest_driver 的 calendar_timestamp_nanos 互逆。
+// Source: user request, 2026-11-28.
+seastar::xtrader::offline_calendar_time decode_timestamp(int64_t nanos) {
+    constexpr int64_t nanos_per_second = 1'000'000'000LL;
+    constexpr int64_t nanos_per_day = 86'400LL * nanos_per_second;
+    const auto days = nanos / nanos_per_day;
+    const auto rem = nanos % nanos_per_day;
+    const std::chrono::year_month_day ymd{std::chrono::sys_days{std::chrono::days{days}}};
+    const int64_t total_seconds = rem / nanos_per_second;
+    const int hour = static_cast<int>(total_seconds / 3600);
+    const int minute = static_cast<int>((total_seconds % 3600) / 60);
+    const int second = static_cast<int>(total_seconds % 60);
+
+    std::ostringstream date_ss;
+    date_ss << std::setw(4) << std::setfill('0') << static_cast<int>(ymd.year())
+            << std::setw(2) << static_cast<unsigned>(ymd.month())
+            << std::setw(2) << static_cast<unsigned>(ymd.day());
+    std::ostringstream time_ss;
+    time_ss << std::setw(2) << std::setfill('0') << hour << ':'
+            << std::setw(2) << minute << ':' << std::setw(2) << second;
+    return {seastar::sstring(date_ss.str()), seastar::sstring(time_ss.str())};
+}
+
+// 构造菜粕（RM）等商品期货的离线合约条款：1 元/吨最小变动，10 吨/手，10 元/跳。
+// Source: user request, 2026-11-28.
+seastar::xtrader::offline_futures_terms make_backtest_terms(
+        const seastar::sstring& instrument_id, const seastar::sstring& exchange_id) {
+    using namespace seastar::xtrader;
+    const offline_rate zero{0, 1, offline_rounding::down};
+    offline_futures_terms terms;
+    terms.instrument = position_instrument{
+        .exchange_id = exchange_id,
+        .instrument_id = instrument_id,
+        .hedge = domain::hedge_flag::speculation,
+    };
+    terms.money_unit = "CNY";
+    terms.tick_value_per_lot = 10;
+    terms.price_tick = 1.0;
+    terms.long_margin_rate = offline_rate{1, 10, offline_rounding::up};
+    terms.short_margin_rate = offline_rate{1, 10, offline_rounding::up};
+    terms.open_fee = offline_fee_rule{0, zero};
+    terms.close_fee = offline_fee_rule{0, zero};
+    terms.close_today_fee = offline_fee_rule{0, zero};
+    terms.close_yesterday_fee = offline_fee_rule{0, zero};
+    return terms;
+}
+
+// 报告用的本地时间文本与撮合编号文本。
+// Source: user request, 2026-11-28.
+std::string local_timestamp(const char* format) {
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+#if defined(_WIN32)
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    std::ostringstream out;
+    out << std::put_time(&local, format);
+    return out.str();
+}
+
+std::string simulated_order_id_text(const seastar::xtrader::simulated_order_id& id) {
+    return "sim-order-" + std::to_string(id.run_id) + "-" + std::to_string(id.sequence);
+}
+
+std::string simulated_trade_id_text(const seastar::xtrader::simulated_trade_id& id) {
+    return "sim-trade-" + std::to_string(id.run_id) + "-" + std::to_string(id.sequence);
+}
+
+// 从 "YYYY-MM-DD HH:MM:SS" 提取 "YYYYMMDD"；不合法返回空串。
+std::string calendar_date_of(const std::string& datetime) {
+    if (datetime.size() < 10 || datetime[4] != '-' || datetime[7] != '-') {
+        return {};
+    }
+    std::string date = datetime.substr(0, 10);
+    date.erase(7, 1);
+    date.erase(4, 1);
+    return date;
+}
+
+// 收集数据集的所有交易日（YYYYMMDD，去重、升序）。
+std::vector<std::string> collect_trading_days(
+        const seastar::xtrader::historical_data_manager& manager,
+        const seastar::xtrader::dataset_manifest& dataset) {
+    std::set<std::string> days;
+    if (dataset.layout_version == 2) {
+        for (const auto& file : dataset.files) {
+            const auto paths = seastar::xtrader::market_data_paths::for_data_file(file, manager.data_root());
+            days.insert(paths.parse_data_file(file).calendar_date);
+        }
+    } else {
+        std::ifstream input(dataset.active_file_path);
+        std::string line;
+        while (std::getline(input, line)) {
+            if (line.empty()) {
+                continue;
+            }
+            const auto comma = line.find(',');
+            const auto datetime = comma == std::string::npos ? line : line.substr(0, comma);
+            const auto date = calendar_date_of(datetime);
+            if (!date.empty()) {
+                days.insert(date);
+            }
+        }
+    }
+    return {days.begin(), days.end()};
+}
+
+// 真实回测执行：加载策略动态模块 -> 加载历史 bar -> 离线策略回放。
+// Source: user request, 2026-11-28.
+std::string run_backtest(const seastar::xtrader::cli::backtest_selection& selection) {
+    using namespace seastar::xtrader;
+    using seastar::sstring;
+
+    // 1) 探针：确认策略存在，取订阅合约与策略信息快照。
+    sstring instrument_id;
+    std::string strategy_info;
+    {
+        auto probe = strategy_registry::instance().create(selection.strategy_id);
+        if (probe) {
+            strategy_info = probe->get_info();
+            const auto& subscriptions = probe->config().subscribed_instruments;
+            if (!subscriptions.empty()) {
+                instrument_id = subscriptions.front();
+            }
+        }
+    }
+    if (instrument_id.empty()) {
+        return "strategy not found or has no subscribed instrument: " + selection.strategy_id;
+    }
+
+    // 2) 扫描数据集，定位该合约并收集交易日列表。
+    historical_data_manager manager(selection.data_root);
+    std::string warning;
+    const auto datasets = manager.scan_datasets(&warning);
+    if (!warning.empty()) {
+        return "data scan failed: " + warning;
+    }
+    const dataset_manifest* selected = nullptr;
+    for (const auto& dataset : datasets) {
+        if (to_lower(dataset.symbol) == to_lower(std::string(instrument_id))) {
+            if (selected != nullptr) {
+                return "ambiguous datasets for " + std::string(instrument_id);
+            }
+            selected = &dataset;
+        }
+    }
+    if (selected == nullptr) {
+        return "historical dataset not found for " + std::string(instrument_id);
+    }
+    auto days = collect_trading_days(manager, *selected);
+    // 日期范围过滤（环境变量，YYYYMMDD，闭区间），用于限制回测范围、避免全量逐日。
+    if (const char* value = std::getenv("XTRADER_BACKTEST_START"); value && *value) {
+        days.erase(std::remove_if(days.begin(), days.end(), [&value] (const std::string& day) {
+            return day < std::string(value);
+        }), days.end());
+    }
+    if (const char* value = std::getenv("XTRADER_BACKTEST_END"); value && *value) {
+        days.erase(std::remove_if(days.begin(), days.end(), [&value] (const std::string& day) {
+            return day > std::string(value);
+        }), days.end());
+    }
+    if (days.empty()) {
+        return "no trading days found for " + std::string(instrument_id);
+    }
+
+    // 3) 回测参数与结果收集容器；逐日资金滚动，形成连续权益曲线。
+    constexpr int64_t tick_value_per_lot = 10;
+    constexpr int volume_multiple = 10;
+    constexpr double price_tick = 1.0;
+    constexpr double margin_rate = 0.1;
+    constexpr int64_t money_units_per_currency = 1;
+    constexpr int64_t initial_balance_units = 1'000'000;
+    int64_t running_balance_units = initial_balance_units;
+
+    size_t traded_days = 0;
+    size_t failed_days = 0;
+    sstring exchange_id;
+    sstring timeframe;
+    std::vector<seastar::xtrader::backtest_trade_record> trade_records;
+    std::vector<seastar::xtrader::backtest_daily_equity> daily_equity;
+    std::vector<std::string> failure_messages;
+
+    // 4) 逐交易日回放：每天只加载当日 bar，模拟行情逐渐到达，避免全量加载与前视。
+    for (const auto& day : days) {
+        backtest_config data_config;
+        data_config.data_root = selection.data_root.string();
+        data_config.start_date = sstring(day);
+        data_config.end_date = sstring(day);
+        backtest_driver driver(data_config);
+        try {
+            driver.start().get();
+            driver.load_data(instrument_id).get();
+        } catch (const std::exception& error) {
+            // 单日加载失败不丢弃整次回测，记录失败日后继续。
+            ++failed_days;
+            failure_messages.push_back(day + ": data load failed: " + error.what());
+            seastar::xtrader::backtest_daily_equity row;
+            row.trading_day = day;
+            row.balance_units = running_balance_units;
+            row.status = "failed";
+            row.error = std::string("data load failed: ") + error.what();
+            daily_equity.push_back(std::move(row));
+            continue;
+        }
+
+        backtest_bar_export_options export_options;
+        export_options.timestamp_kind = offline_bar_timestamp::open;
+        export_options.duration_nanos = 60'000'000'000LL;
+        export_options.time_domain = "synthetic-naive-local";
+        export_options.resolve_trading_day = [] (const sstring&, const sstring&,
+                                                 const sstring& date, const sstring&) {
+            return date;
+        };
+        std::vector<offline_bar_record> bars;
+        try {
+            bars = driver.export_offline_bars(export_options);
+        } catch (const std::exception& error) {
+            ++failed_days;
+            failure_messages.push_back(day + ": bar export failed: " + error.what());
+            seastar::xtrader::backtest_daily_equity row;
+            row.trading_day = day;
+            row.balance_units = running_balance_units;
+            row.status = "failed";
+            row.error = std::string("bar export failed: ") + error.what();
+            daily_equity.push_back(std::move(row));
+            continue;
+        }
+        if (bars.empty()) {
+            continue;
+        }
+
+        exchange_id = bars.front().exchange_id;
+        timeframe = bars.front().timeframe;
+        const sstring trading_day = bars.front().trading_day;
+
+        offline_bar_strategy_config replay_config;
+        replay_config.replay.account = position_account_scope{
+            "offline", "sim-broker", "sim-account", trading_day};
+        replay_config.replay.money_unit = "CNY";
+        replay_config.replay.strategy_id = sstring(selection.strategy_id);
+        replay_config.replay.contracts = {make_backtest_terms(instrument_id, exchange_id)};
+        replay_config.replay.cost_allocation = offline_cost_allocation::fifo;
+        replay_config.replay.price_normalization = offline_price_normalization::exact;
+        replay_config.replay.bar_liquidity = simulated_bar_liquidity{.buy_volume = 1, .sell_volume = 1};
+        replay_config.replay.run_id = 1;
+        // 每日以滚动余额起步，跨日盈亏连续累计。
+        replay_config.replay.initial_balance = running_balance_units;
+        replay_config.instrument_spec = domain::instrument_spec{
+            .instrument_id = instrument_id,
+            .exchange_id = exchange_id,
+            .volume_multiple = volume_multiple,
+            .price_tick = price_tick,
+            .is_trading = true,
+        };
+        replay_config.maximum_price_ticks = 100'000;
+        replay_config.money_units_per_currency = money_units_per_currency;
+        replay_config.close_rule = close_position_rule::today_first;
+        replay_config.max_notifications_per_boundary = 1000;
+        replay_config.format_timestamp = decode_timestamp;
+
+        // 每天新建策略实例：日内策略每日状态重置，且回放引擎要求策略处于 created 态。
+        auto strategy = strategy_registry::instance().create(selection.strategy_id);
+        if (!strategy) {
+            return "strategy not found in registry: " + selection.strategy_id;
+        }
+        try {
+            auto replay = offline_bar_strategy_replay::create(replay_config, strategy, bars);
+            replay->run().get();
+            const auto stats = replay->stats();
+            const auto snapshot = replay->snapshot();
+            ++traded_days;
+
+            seastar::xtrader::backtest_daily_equity row;
+            row.trading_day = std::string(trading_day);
+            row.bars = stats.completed_bars;
+            row.signals = strategy->stats().signal_count;
+            row.orders = stats.submitted_orders;
+            row.fills = stats.fills;
+            row.canceled = stats.canceled_orders;
+            row.realized_pnl_units = snapshot.funds.close_profit;
+            row.commission_units = snapshot.funds.commission;
+            row.balance_units = snapshot.funds.balance;
+            row.margin_units = snapshot.funds.position_margin;
+            // 离线模型未实现盯市估值；日内策略收盘空仓，未实现盈亏按 0 记录。
+            row.unrealized_pnl_units = 0;
+            row.close_position = snapshot.position.total.long_today
+                + snapshot.position.total.long_yesterday
+                - snapshot.position.total.short_today
+                - snapshot.position.total.short_yesterday;
+            daily_equity.push_back(std::move(row));
+            running_balance_units = snapshot.funds.balance;
+
+            for (const auto& fill : replay->trades()) {
+                seastar::xtrader::backtest_trade_record record;
+                record.trade_id = simulated_trade_id_text(fill.trade.id);
+                record.order_sys_id = simulated_order_id_text(fill.trade.order_id);
+                record.strategy_id = std::string(fill.trade.strategy_id);
+                record.exchange_id = std::string(fill.trade.exchange_id);
+                record.instrument_id = std::string(fill.trade.instrument_id);
+                record.trading_day = std::string(trading_day);
+                record.calendar_date = std::string(fill.time.calendar_date);
+                record.trade_time = std::string(fill.time.time);
+                record.timestamp_nanos = fill.timestamp_nanos;
+                record.direction = fill.trade.direction;
+                record.offset = fill.trade.offset;
+                record.hedge = fill.trade.hedge;
+                record.price = fill.trade.price;
+                record.volume = fill.trade.volume;
+                record.commission_units = fill.trade.commission_units.value_or(0);
+                record.margin_change_units = fill.trade.margin_change_units.value_or(0);
+                record.close_profit_units = fill.trade.close_profit_units.value_or(0);
+                record.fill_source = fill.trade.source == simulated_fill_source::bar_open_approximation
+                    ? "bar_open_approximation" : "best_quote_snapshot";
+                record.is_approximate = fill.trade.is_approximate;
+                record.market_sequence = fill.trade.market_sequence;
+                trade_records.push_back(std::move(record));
+            }
+        } catch (const std::exception& error) {
+            ++failed_days;
+            failure_messages.push_back(day + ": replay failed: " + error.what());
+            seastar::xtrader::backtest_daily_equity row;
+            row.trading_day = std::string(trading_day);
+            row.balance_units = running_balance_units;
+            row.status = "failed";
+            row.error = std::string("replay failed: ") + error.what();
+            daily_equity.push_back(std::move(row));
+        }
+    }
+
+    if (traded_days == 0 && failed_days == 0) {
+        return "no bars to replay";
+    }
+
+    // 5) FIFO 平仓配对、汇总统计与报告落盘。
+    std::vector<std::string> pairing_warnings;
+    const auto closed_trades = build_closed_trades(
+        trade_records, tick_value_per_lot, price_tick, money_units_per_currency, pairing_warnings);
+
+    seastar::xtrader::backtest_run_meta meta;
+    meta.run_id = static_cast<uint64_t>(std::time(nullptr));
+    meta.created_at = local_timestamp("%Y-%m-%d %H:%M:%S");
+    meta.strategy_id = selection.strategy_id;
+    meta.strategy_params = strategy_info;
+    meta.exchange_id = std::string(exchange_id);
+    meta.instrument_id = std::string(instrument_id);
+    meta.timeframe = std::string(timeframe);
+    meta.start_date = days.front();
+    meta.end_date = days.back();
+    meta.data_file = selected->active_file_path.empty()
+        ? selected->dataset_dir.string() : selected->active_file_path.string();
+    meta.initial_balance_units = initial_balance_units;
+    meta.money_units_per_currency = money_units_per_currency;
+    meta.tick_value_per_lot = tick_value_per_lot;
+    meta.volume_multiple = volume_multiple;
+    meta.price_tick = price_tick;
+    meta.margin_rate = margin_rate;
+    meta.fee_per_lot_open = 0.0;
+    meta.fee_per_lot_close = 0.0;
+    meta.slippage_ticks = 0.0;
+    meta.matching_mode = "next_bar_open";
+    meta.close_rule = "today_first";
+    meta.cost_allocation = "fifo";
+    meta.failed_days = static_cast<int>(failed_days);
+    meta.warnings = failure_messages;
+
+    auto summary = seastar::xtrader::summarize_backtest(
+        meta, daily_equity, trade_records, closed_trades);
+    summary.warnings.insert(summary.warnings.end(),
+        pairing_warnings.begin(), pairing_warnings.end());
+    meta.status = (failed_days == 0 && summary.warnings.empty())
+        ? "completed" : "incomplete";
+
+    const char* report_env = std::getenv("XTRADER_BACKTEST_REPORT_DIR");
+    const std::filesystem::path report_root = report_env && *report_env
+        ? std::filesystem::path(report_env) : std::filesystem::path("exports/backtest");
+    const auto report_dir = seastar::xtrader::backtest_report_directory(
+        report_root, std::string(exchange_id), std::string(instrument_id),
+        selection.strategy_id, meta.run_id, local_timestamp("%Y%m%d_%H%M%S"));
+    std::string report_path;
+    try {
+        report_path = seastar::xtrader::write_backtest_report(
+            report_dir, meta, summary, trade_records, closed_trades, daily_equity).string();
+    } catch (const std::exception& error) {
+        summary.warnings.push_back(std::string("报告写出失败: ") + error.what());
+    }
+
+    std::ostringstream out;
+    if (traded_days == 0) {
+        out << "no successful trading days\n";
+    }
+    out << seastar::xtrader::format_backtest_summary_text(meta, summary);
+    if (!failure_messages.empty()) {
+        out << "\nfirst_failure=" << failure_messages.front();
+    }
+    if (!report_path.empty()) {
+        out << "\nreport=" << report_path;
+    }
+    return out.str();
 }
 
 void open_backtest_menu(const seastar::xtrader::market_data_paths& paths) {
     seastar::xtrader::cli::run_backtest_menu(
         paths, std::cin, std::cout, std::cerr,
         [] (const seastar::xtrader::cli::backtest_selection& selection) {
-            seastar::xtrader::backtest_config config;
-            config.data_root = selection.data_root.string();
-            config.data_files = selection.data_files;
-            config.product_type = selection.product_directory.filename().string();
-            config.strategy_id = selection.strategy_id;
-            return run_backtest(config);
+            return run_backtest(selection);
         });
 }
 
@@ -270,6 +671,7 @@ void run_root_menu() {
         std::cout << ui_text("12) Import legacy X-Trader INI", "12) 导入旧版 X-Trader INI") << std::endl;
         std::cout << ui_text("13) Import plaintext X-Trader INI", "13) 导入明文 X-Trader INI") << std::endl;
         std::cout << "14) Language / 语言" << std::endl;
+        std::cout << ui_text("15) Minute bars -> Daily bars", "15) 分钟线转日线") << std::endl;
         std::cout << ui_text("q) Quit", "q) 退出") << std::endl;
         std::cout << "==================================" << std::endl;
         std::cout << ui_text("Select: ", "选择：");
@@ -472,6 +874,98 @@ void run_root_menu() {
             seastar::xtrader::cli::open_plaintext_import_menu();
         } else if (input == "14" || input == "language") {
             seastar::xtrader::cli::run_language_menu(std::cin, std::cout, std::cerr);
+        } else if (input == "15") {
+            // 分钟线 -> 日线：直接调用独立 SO 的 C ABI，夜盘默认归下一交易日。
+            std::string m2d_input_path;
+            std::string m2d_output_path;
+            std::string m2d_start_date;
+            std::string m2d_end_date;
+            while (true) {
+                std::cout << ui_text("\n[Minute -> Daily]", "\n[分钟线转日线]") << std::endl;
+                std::cout << ui_text("  input: ", "  输入 CSV：")
+                          << (m2d_input_path.empty() ? ui_text("(not set)", "（未设置）")
+                                                     : m2d_input_path) << std::endl;
+                std::cout << ui_text("  output: ", "  输出 CSV：")
+                          << (m2d_output_path.empty() ? ui_text("(input + .daily.csv)",
+                                                                "（输入路径 + .daily.csv）")
+                                                      : m2d_output_path) << std::endl;
+                std::cout << ui_text("  start: ", "  开始交易日：")
+                          << (m2d_start_date.empty() ? ui_text("(all)", "（不限）")
+                                                     : m2d_start_date) << std::endl;
+                std::cout << ui_text("  end: ", "  结束交易日：")
+                          << (m2d_end_date.empty() ? ui_text("(all)", "（不限）")
+                                                   : m2d_end_date) << std::endl;
+                std::cout << ui_text("  night session: next trading day",
+                                     "  夜盘归属：下一交易日") << std::endl;
+                std::cout << ui_text("  1) Set input path", "  1) 设置输入路径") << std::endl;
+                std::cout << ui_text("  2) Set output path", "  2) 设置输出路径") << std::endl;
+                std::cout << ui_text("  3) Set start date", "  3) 设置开始交易日") << std::endl;
+                std::cout << ui_text("  4) Set end date", "  4) 设置结束交易日") << std::endl;
+                std::cout << ui_text("  5) Run conversion", "  5) 执行转换") << std::endl;
+                std::cout << ui_text("  u) Up", "  u) 返回") << std::endl;
+                std::cout << ui_text("Select: ", "选择：");
+
+                std::getline(std::cin, input);
+                input = to_lower(input);
+                if (input == "1") {
+                    std::cout << ui_text("Enter input CSV path: ", "请输入分钟线 CSV 路径：");
+                    std::getline(std::cin, m2d_input_path);
+                } else if (input == "2") {
+                    std::cout << ui_text("Enter output CSV path (empty for default): ",
+                                         "请输入日线 CSV 路径（留空使用默认）：");
+                    std::getline(std::cin, m2d_output_path);
+                } else if (input == "3") {
+                    std::cout << ui_text("Enter start trading day YYYY-MM-DD (empty for all): ",
+                                         "请输入开始交易日 YYYY-MM-DD（留空不限）：");
+                    std::getline(std::cin, m2d_start_date);
+                } else if (input == "4") {
+                    std::cout << ui_text("Enter end trading day YYYY-MM-DD (empty for all): ",
+                                         "请输入结束交易日 YYYY-MM-DD（留空不限）：");
+                    std::getline(std::cin, m2d_end_date);
+                } else if (input == "5") {
+                    if (m2d_input_path.empty()) {
+                        std::cerr << ui_text("[ERROR] input path not set",
+                                             "[ERROR] 尚未设置输入路径") << std::endl;
+                        continue;
+                    }
+                    if (!std::filesystem::exists(m2d_input_path)) {
+                        std::cerr << ui_text("[ERROR] input path does not exist: ",
+                                             "[ERROR] 输入路径不存在：")
+                                  << m2d_input_path << std::endl;
+                        continue;
+                    }
+                    const std::string output_path = m2d_output_path.empty()
+                        ? m2d_input_path + ".daily.csv" : m2d_output_path;
+                    xt_m2d_options options{};
+                    options.input_path = m2d_input_path.c_str();
+                    options.output_path = output_path.c_str();
+                    options.start_date = m2d_start_date.empty() ? nullptr : m2d_start_date.c_str();
+                    options.end_date = m2d_end_date.empty() ? nullptr : m2d_end_date.c_str();
+                    options.night_mode = XT_M2D_NIGHT_NEXT_DAY;
+                    xt_m2d_stats stats{};
+                    std::cout << ui_text("Converting...", "开始转换...") << std::endl;
+                    xlog::info("minute_to_daily input=" + m2d_input_path + " output=" + output_path);
+                    const int result = xt_m2d_convert(&options, &stats);
+                    std::cout << ui_text("  Rows: ", "  数据行：") << stats.input_rows
+                              << ui_text(" input, ", " 输入，") << stats.output_rows
+                              << ui_text(" daily, ", " 日线，") << stats.skipped_rows
+                              << ui_text(" skipped, ", " 跳过，") << stats.unassigned_night_rows
+                              << ui_text(" unassigned night", " 根夜盘无法归属") << std::endl;
+                    if (result == 0) {
+                        std::cout << ui_text("[OK] Daily file written: ",
+                                             "[OK] 日线文件已生成：")
+                                  << output_path << std::endl;
+                    } else {
+                        std::cerr << ui_text("[ERROR] Conversion failed: ",
+                                             "[ERROR] 转换失败：")
+                                  << (stats.error[0] ? stats.error : "unknown error") << std::endl;
+                    }
+                } else if (input == "u" || input == "back" || input == "up") {
+                    break;
+                } else {
+                    std::cerr << ui_text("[ERROR] Unknown command", "[ERROR] 无效的命令") << std::endl;
+                }
+            }
         } else if (input == "q" || input == "quit" || input == "exit") {
             xlog::info("exit");
             std::cout << ui_text("Goodbye!", "再见！") << std::endl;

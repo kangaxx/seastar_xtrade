@@ -102,11 +102,15 @@ public:
         const std::string& timeframe,
         std::string* warning = nullptr) const;
 
+    // 按日历日范围（YYYYMMDD，闭区间）过滤加载；空字符串表示该侧不限。
+    // v2 布局只读范围内的每日文件，legacy 布局逐行流式过滤，避免全量进内存。
     [[nodiscard]] bool load_bars(
         const dataset_manifest& dataset,
         std::vector<historical_bar>& bars,
         std::string* warning = nullptr,
-        historical_load_mode mode = historical_load_mode::permissive) const;
+        historical_load_mode mode = historical_load_mode::permissive,
+        const std::string& start_date = "",
+        const std::string& end_date = "") const;
     // Raw Tick cells use market_csv_header(tick)'s column order, without inventing
     // trading calendars or confusing cumulative CTP volume with bar volume.
     [[nodiscard]] bool load_ticks(

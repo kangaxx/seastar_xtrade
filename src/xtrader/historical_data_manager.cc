@@ -109,8 +109,20 @@ struct daily_csv_row {
     std::size_t line;
 };
 
+// 从 "YYYY-MM-DD HH:MM:SS" 提取 "YYYYMMDD"；无法解析返回空串。
+std::string calendar_date_of(const std::string& datetime) {
+    if (datetime.size() < 10 || datetime[4] != '-' || datetime[7] != '-') {
+        return {};
+    }
+    std::string date = datetime.substr(0, 10);
+    date.erase(7, 1);
+    date.erase(4, 1);
+    return date;
+}
+
 std::vector<daily_csv_row> read_daily_csv(const std::filesystem::path& root,
-        const dataset_manifest& dataset, market_data_kind kind) {
+        const dataset_manifest& dataset, market_data_kind kind,
+        const std::string& start_date, const std::string& end_date) {
     if (dataset.layout_version != 2 || dataset.kind != kind
             || data_kind_for_timeframe(dataset.timeframe) != kind || dataset.files.empty()) {
         throw std::invalid_argument("dataset does not have the requested daily Tick/bar schema");
@@ -128,6 +140,10 @@ std::vector<daily_csv_row> read_daily_csv(const std::filesystem::path& root,
         paths.validate_filesystem_path(path);
         if (!same_key(file.key, dataset_key(dataset)) || file.format != "csv") {
             throw std::invalid_argument("daily file identity differs from selected dataset");
+        }
+        if ((!start_date.empty() && file.calendar_date < start_date)
+                || (!end_date.empty() && file.calendar_date > end_date)) {
+            continue;
         }
         std::ifstream input(path);
         if (!input.is_open()) { throw std::runtime_error("cannot open daily CSV: " + path.string()); }
@@ -377,7 +393,9 @@ bool historical_data_manager::load_bars(
     const dataset_manifest& dataset,
     std::vector<historical_bar>& bars,
     std::string* warning,
-    historical_load_mode mode) const {
+    historical_load_mode mode,
+    const std::string& start_date,
+    const std::string& end_date) const {
 
     bars.clear();
     if (warning != nullptr) {
@@ -396,7 +414,8 @@ bool historical_data_manager::load_bars(
     }
     if (dataset.layout_version == 2) {
         try {
-            const auto rows = read_daily_csv(_data_root, dataset, market_data_kind::bar);
+            const auto rows = read_daily_csv(_data_root, dataset, market_data_kind::bar,
+                                             start_date, end_date);
             for (const auto& row : rows) {
                 historical_bar bar;
                 if (!parse_bar_row(row.fields, historical_load_mode::strict, bar)) {
@@ -488,6 +507,23 @@ bool historical_data_manager::load_bars(
             }
             continue;
         }
+        if (!start_date.empty() || !end_date.empty()) {
+            const auto date = calendar_date_of(bar.datetime);
+            if (date.empty()) {
+                if (mode == historical_load_mode::strict) {
+                    bars.clear();
+                    if (warning != nullptr) {
+                        *warning = "Invalid datetime in " + dataset.active_file_path.generic_string()
+                            + " at line " + std::to_string(line_number);
+                    }
+                    return false;
+                }
+                continue;
+            }
+            if ((!start_date.empty() && date < start_date) || (!end_date.empty() && date > end_date)) {
+                continue;
+            }
+        }
         bar.source_line = line_number;
         bar.source_file = dataset.active_file_path;
         bars.push_back(std::move(bar));
@@ -516,7 +552,7 @@ bool historical_data_manager::load_ticks(const dataset_manifest& dataset,
     ticks.clear();
     if (warning != nullptr) { warning->clear(); }
     try {
-        auto rows = read_daily_csv(_data_root, dataset, market_data_kind::tick);
+        auto rows = read_daily_csv(_data_root, dataset, market_data_kind::tick, "", "");
         for (auto& row : rows) { ticks.push_back(std::move(row.fields)); }
         if (ticks.empty()) { throw std::runtime_error("daily Tick dataset contains no rows"); }
         return true;

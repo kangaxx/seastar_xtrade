@@ -642,6 +642,18 @@ seastar_add_test (xtrader_offline_bar_strategy_replay
     ../../src/xtrader/offline_bar_replay.cc
     ../../src/xtrader/offline_bar_strategy_replay.cc)
 
+# RM 海龟日内策略：品种过滤、收盘前禁开、最后两分钟强平、跨日重置。
+# Source: user request, 2026-11-27.
+seastar_add_test (xtrader_rm_turtle_intraday
+  SOURCES
+    xtrader_rm_turtle_intraday_test.cc
+    ../../strategies/rm_turtle_intraday.cc
+    ../../src/xtrader/domain_types.cc
+    ../../src/xtrader/strategy_base.cc
+    ../../src/xtrader/strategy_lifecycle.cc
+    ../../src/xtrader/strategy_registry.cc
+    ../../src/xtrader/subscription_registry.cc)
+
 # B4 offline request correlation and query timeout handling; no CTP connection.
 # Source: user request, 2026-11-10. Signature: GitHub Copilot (Auto).
 seastar_add_test (xtrader_ctp_query_tracker

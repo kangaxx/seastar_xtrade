@@ -32,6 +32,14 @@ struct offline_calendar_time {
     sstring time;
 };
 
+// 回测逐笔成交：撮合结果 + 事件时间，供结果统计与报告使用。
+// Source: user request, 2026-11-28.
+struct offline_bar_strategy_trade {
+    simulated_trade trade;
+    int64_t timestamp_nanos = 0;
+    offline_calendar_time time;
+};
+
 struct offline_bar_strategy_config {
     offline_bar_replay_config replay;
     domain::instrument_spec instrument_spec;
@@ -61,6 +69,8 @@ public:
     [[nodiscard]] size_t active_order_count() const { return _replay->active_order_count(); }
     [[nodiscard]] offline_account_snapshot snapshot() const { return _replay->snapshot(_instrument); }
     [[nodiscard]] size_t normalized_order_prices() const noexcept { return _normalized_order_prices; }
+    // 按成交发生顺序返回全部逐笔成交，运行失败时仅保留失败前的部分。
+    [[nodiscard]] const std::vector<offline_bar_strategy_trade>& trades() const noexcept { return _trades; }
 
 private:
     using notification = std::variant<domain::order, domain::trade_report>;
@@ -92,6 +102,7 @@ private:
     strategy_lifecycle_manager _manager;
     std::map<uint64_t, offline_calendar_time> _time_labels;
     std::deque<notification> _pending;
+    std::vector<offline_bar_strategy_trade> _trades;
     offline_bar_replay_context* _active_context = nullptr;
     size_t _normalized_order_prices = 0;
     bool _notifications_consistent = true;

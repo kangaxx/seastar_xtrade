@@ -383,6 +383,8 @@ future<> offline_bar_strategy_replay::dispatch_open(offline_bar_replay_context& 
         }
         enqueue(make_order_update(result.order_updates[index]));
         enqueue(make_trade_update(result.trades[index], notice.sequence));
+        // 记录逐笔成交与事件时间；校验全部通过后才落库，避免污染结果。
+        _trades.push_back({result.trades[index], notice.timestamp_nanos, _time_labels.at(notice.sequence)});
     }
     co_await flush_notifications();
     co_return;

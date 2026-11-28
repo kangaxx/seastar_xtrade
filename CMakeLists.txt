@@ -1347,6 +1347,8 @@ if (Seastar_APPS)
     set (exclude "")
   endif ()
 
+  # 分钟线转日线工具：独立 SO，同时供 CLI 菜单直接调用。
+  add_subdirectory (tools/minute_to_daily)
   add_subdirectory (apps ${exclude})
 endif ()
 

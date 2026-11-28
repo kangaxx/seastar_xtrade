@@ -1,9 +1,11 @@
 #include "turtle_strategy.hh"
 
 #include <seastar/xtrader/strategy_lifecycle.hh>
+#include <seastar/xtrader/strategy_registry.hh>
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <utility>
 
 namespace seastar::xtrader {
@@ -208,4 +210,33 @@ future<> turtle_strategy::submit(strategy_context& ctx, domain::side dir,
     return ctx.submit_order(request).then([](domain::order_status) {});
 }
 
+std::string turtle_strategy::get_info() const {
+    return R"({"name":"turtle_strategy","backtest_support":true,"is_intraday":false})";
+}
+
 } // namespace seastar::xtrader
+
+namespace {
+
+// 工厂：构造带默认配置的策略实例。
+std::shared_ptr<seastar::xtrader::strategy_base> create_turtle_strategy() {
+    seastar::xtrader::strategy_config config{
+        .strategy_id = "turtle_strategy",
+        .strategy_name = "海龟策略",
+        .strategy_type = "trend",
+        .subscribed_instruments = {"rb9999"},
+    };
+    return std::make_shared<seastar::xtrader::turtle_strategy>(
+        std::move(config), seastar::xtrader::turtle_strategy_params{});
+}
+
+// 自动注册：静态对象构造时把工厂注册进全局注册表。
+struct turtle_strategy_registrar {
+    turtle_strategy_registrar() {
+        seastar::xtrader::strategy_registry::instance().register_strategy(
+            "turtle_strategy", &create_turtle_strategy);
+    }
+};
+static turtle_strategy_registrar s_turtle_strategy_registrar;
+
+} // namespace
